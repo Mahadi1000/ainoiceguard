@@ -1,0 +1,258 @@
+/*
+ * NoiseGuard - Minimal Dark Theme
+ * Designed for a compact tray popup window (380x520).
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #1a1a2e;
+  --bg-section: #16213e;
+  --bg-hover: #1f2b47;
+  --accent: #00cc88;
+  --accent-dim: #00995e;
+  --text: #e0e0e0;
+  --text-dim: #8892a4;
+  --danger: #ff4757;
+  --border: #2a2a4a;
+  --radius: 8px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+#app {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100vh;
+}
+
+/* ── Header ──────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #666;
+  transition: background 0.3s;
+}
+
+.logo-icon.active {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.version {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── Toggle Button ───────────────────────── */
+
+.toggle-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0;
+}
+
+.toggle-btn {
+  -webkit-app-region: no-drag;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  background: var(--bg-section);
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle-btn:hover {
+  border-color: var(--accent-dim);
+  transform: scale(1.03);
+}
+
+.toggle-btn.on {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, #0d3b2e, #1a1a2e);
+  box-shadow: 0 0 24px rgba(0, 204, 136, 0.15);
+}
+
+.toggle-btn.on .toggle-label {
+  color: var(--accent);
+}
+
+.toggle-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ── Sections ────────────────────────────── */
+
+.section {
+  -webkit-app-region: no-drag;
+}
+
+.section h2 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+/* ── Device Select ───────────────────────── */
+
+.device-select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-section);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.device-select:hover,
+.device-select:focus {
+  border-color: var(--accent-dim);
+}
+
+.device-select option {
+  background: var(--bg-section);
+  color: var(--text);
+}
+
+/* ── Slider ──────────────────────────────── */
+
+.slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.level-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.level-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-section);
+  outline: none;
+  margin: 8px 0 4px;
+  cursor: pointer;
+}
+
+.level-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+  transition: transform 0.1s;
+}
+
+.level-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ── Status ──────────────────────────────── */
+
+.status-section {
+  margin-top: auto;
+  padding: 10px 12px;
+  background: var(--bg-section);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+.status-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.status-value {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Error Bar ───────────────────────────── */
+
+.error-bar {
+  padding: 8px 12px;
+  background: rgba(255, 71, 87, 0.15);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  color: var(--danger);
+  font-size: 12px;
+  text-align: center;
+}
+
+.hidden {
+  display: none;
+}

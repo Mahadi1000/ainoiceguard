@@ -1,0 +1,26 @@
+{
+  "name": "noiseguard",
+  "version": "0.1.0",
+  "description": "Real-time noise cancellation desktop app (Krisp-inspired)",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build:native": "powershell -ExecutionPolicy Bypass -File ./scripts/build-native.ps1",
+    "rebuild:electron": "electron-rebuild -f -w noiseguard"
+  },
+  "keywords": ["noise-cancellation", "rnnoise", "electron", "portaudio", "wasapi"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^33.0.0",
+    "node-gyp": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

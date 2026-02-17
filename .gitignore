@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+build/
+native/build/
+
+# Fetched & compiled C dependencies
+deps/
+
+# OS files
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# Electron
+dist/
+out/
