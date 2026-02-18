@@ -7,7 +7,9 @@
     "start": "electron .",
     "dev": "electron .",
     "build:native": "powershell -ExecutionPolicy Bypass -File ./scripts/build-native.ps1",
-    "rebuild:electron": "electron-rebuild -f -w noiseguard"
+    "rebuild:electron": "electron-rebuild -f -w noiseguard",
+    "dist": "electron-builder --win --x64",
+    "dist:full": "npm run build:native && npm run rebuild:electron && npm run dist"
   },
   "keywords": [
     "noise-cancellation",
@@ -16,7 +18,7 @@
     "portaudio",
     "wasapi"
   ],
-  "author": "",
+  "author": "NoiseGuard",
   "license": "MIT",
   "dependencies": {
     "node-addon-api": "^8.0.0"
@@ -29,5 +31,39 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "build": {
+    "appId": "com.noiseguard.app",
+    "productName": "NoiseGuard",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "build/Release/**",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "build/Release/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NoiseGuard",
+      "uninstallDisplayName": "NoiseGuard"
+    }
   }
 }

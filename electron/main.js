@@ -15,7 +15,8 @@ const { createTray, destroyTray } = require('./tray');
 /* ── Load native addon ─────────────────────────────────────────────────────── */
 let addon;
 try {
-  addon = require('../build/Release/noiseguard.node');
+  const addonPath = path.join(__dirname, '..', 'build', 'Release', 'noiseguard.node');
+  addon = require(addonPath);
 } catch (err) {
   console.error('Failed to load native addon:', err.message);
   console.error('Did you run "npm run build:native" first?');
