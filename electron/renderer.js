@@ -5,10 +5,10 @@
  * preload-exposed `window.ainoiceguard` bridge.
  *
  * Features:
- *   - Device selection and toggle
- *   - Level meters (input RMS, output RMS, VAD)
- *   - Processing log confirming RNNoise activity
+ *   - Device selection and power toggle
+ *   - Live level meters (input RMS, output RMS, VAD)
  *   - VAD gate threshold control
+ *   - VB-Cable auto-detect
  */
 
 /* ── DOM References ──────────────────────────────────────────────────────── */
@@ -36,10 +36,7 @@ const outputDb = document.getElementById("outputDb");
 const vadBar = document.getElementById("vadBar");
 const vadValue = document.getElementById("vadValue");
 const meterSection = document.getElementById("meterSection");
-
-/* Log */
-const logContainer = document.getElementById("logContainer");
-const logSection = document.getElementById("logSection");
+const meterHint = document.getElementById("meterHint");
 
 /* VB-Cable setup guide */
 const setupGuide = document.getElementById("setupGuide");
@@ -52,8 +49,7 @@ const vbCableLink = document.getElementById("vbCableLink");
 let isRunning = false;
 let metricsInterval = null;
 let lastFrameCount = 0;
-let logLines = 0;
-const MAX_LOG_LINES = 50;
+let noInputPollCount = 0;
 
 /* ── Initialize ──────────────────────────────────────────────────────────── */
 
@@ -128,7 +124,6 @@ toggleBtn.addEventListener("click", async () => {
       const result = await window.ainoiceguard.stop();
       if (result.success) {
         updateUI(false);
-        addLog("Engine stopped", "warn");
       } else {
         showError(result.error || "Failed to stop");
       }
@@ -137,17 +132,14 @@ toggleBtn.addEventListener("click", async () => {
       const outputIdx = parseInt(outputSelect.value, 10);
 
       statusText.textContent = "Starting...";
-      addLog("Starting engine...", "ok");
       const result = await window.ainoiceguard.start(inputIdx, outputIdx);
 
       if (result.success) {
         updateUI(true);
         hideError();
-        addLog("Engine started. RNNoise processing frames.", "ok");
       } else {
         showError(result.error || "Failed to start");
         statusText.textContent = "Error";
-        addLog("Start failed: " + (result.error || "unknown"), "warn");
       }
     }
   } catch (err) {
@@ -184,7 +176,6 @@ vadThreshSlider.addEventListener("change", async () => {
   const threshold = parseInt(vadThreshSlider.value, 10) / 100.0;
   try {
     await window.ainoiceguard.setVadThreshold(threshold);
-    addLog("VAD threshold set to " + (threshold * 100).toFixed(0) + "%", "ok");
   } catch (err) {
     /* Non-critical */
   }
@@ -198,22 +189,26 @@ outputSelect.addEventListener("change", restartIfRunning);
 async function restartIfRunning() {
   if (!isRunning) return;
 
-  await window.ainoiceguard.stop();
-  const inputIdx = parseInt(inputSelect.value, 10);
-  const outputIdx = parseInt(outputSelect.value, 10);
+  try {
+    stopMetricsPolling();
+    statusText.textContent = "Restarting...";
 
-  statusText.textContent = "Restarting...";
-  addLog("Restarting with new devices...", "ok");
-  const result = await window.ainoiceguard.start(inputIdx, outputIdx);
+    await window.ainoiceguard.stop();
 
-  if (result.success) {
-    updateUI(true);
-    hideError();
-    addLog("Restarted successfully.", "ok");
-  } else {
-    showError(result.error || "Restart failed");
+    const inputIdx = parseInt(inputSelect.value, 10);
+    const outputIdx = parseInt(outputSelect.value, 10);
+    const result = await window.ainoiceguard.start(inputIdx, outputIdx);
+
+    if (result.success) {
+      updateUI(true);
+      hideError();
+    } else {
+      showError(result.error || "Restart failed");
+      updateUI(false);
+    }
+  } catch (err) {
+    showError("Restart error: " + err.message);
     updateUI(false);
-    addLog("Restart failed: " + (result.error || "unknown"), "warn");
   }
 }
 
@@ -223,50 +218,59 @@ function startMetricsPolling() {
   if (metricsInterval) return;
 
   lastFrameCount = 0;
+  noInputPollCount = 0;
   metricsInterval = setInterval(async () => {
     try {
       const m = await window.ainoiceguard.getMetrics();
 
-      /* Level meters (RMS -> percentage, with log scaling for dB feel) */
-      const inPct = rmsToPercent(m.inputRms);
-      const outPct = rmsToPercent(m.outputRms);
+      if (!isRunning) return;
+
+      /* Coerce to numbers so we never show NaN (IPC or addon can return undefined) */
+      const inputRms = Number(m.inputRms) || 0;
+      const outputRms = Number(m.outputRms) || 0;
+      const vadProb = Number(m.vadProbability) || 0;
+      const gateGain = Number(m.gateGain) || 0;
+      const framesProcessed = Number(m.framesProcessed) || 0;
+
+      const inPct = rmsToPercent(inputRms);
+      const outPct = rmsToPercent(outputRms);
 
       inputMeter.style.width = inPct + "%";
       outputMeter.style.width = outPct + "%";
-      inputDb.textContent = rmsToDb(m.inputRms);
-      outputDb.textContent = rmsToDb(m.outputRms);
+      inputDb.textContent = rmsToDb(inputRms);
+      outputDb.textContent = rmsToDb(outputRms);
 
-      /* VAD bar */
-      const vadPct = Math.round(m.vadProbability * 100);
+      const vadPct = Math.min(100, Math.max(0, Math.round(vadProb * 100)));
       vadBar.style.width = vadPct + "%";
       vadValue.textContent = vadPct + "%";
 
-      /* Status fields */
-      framesText.textContent = formatFrameCount(m.framesProcessed);
-      gateText.textContent = (m.gateGain * 100).toFixed(0) + "%";
+      framesText.textContent = formatFrameCount(framesProcessed);
+      gateText.textContent = Number.isFinite(gateGain) ? (gateGain * 100).toFixed(0) + "%" : "--";
 
-      /* Log periodic confirmation that RNNoise is processing */
-      if (m.framesProcessed > 0 && m.framesProcessed !== lastFrameCount) {
-        const delta = m.framesProcessed - lastFrameCount;
-        if (
-          lastFrameCount > 0 &&
-          delta > 0 &&
-          m.framesProcessed % 500 < delta
-        ) {
-          addLog(
-            "RNNoise: " +
-              m.framesProcessed +
-              " frames | " +
-              "VAD=" +
-              (m.vadProbability * 100).toFixed(0) +
-              "% | " +
-              "Gate=" +
-              (m.gateGain * 100).toFixed(0) +
-              "%",
-            "ok",
-          );
+      lastFrameCount = framesProcessed;
+
+      /* Hints: no input for ~2s, or output is Mute */
+      if (meterHint) {
+        const outputIsMute = parseInt(outputSelect.value, 10) === -2;
+        if (inputRms <= 0.001) {
+          noInputPollCount++;
+          if (noInputPollCount >= 20) {
+            meterHint.textContent = "No input signal — check microphone and device selection.";
+            meterHint.classList.remove("hidden");
+          } else if (outputIsMute) {
+            meterHint.textContent = "Select an output (e.g. Speakers or CABLE) to hear processed audio.";
+            meterHint.classList.remove("hidden");
+          }
+        } else {
+          noInputPollCount = 0;
+          if (outputIsMute) {
+            meterHint.textContent = "Select an output (e.g. Speakers or CABLE) to hear processed audio.";
+            meterHint.classList.remove("hidden");
+          } else {
+            meterHint.textContent = "";
+            meterHint.classList.add("hidden");
+          }
         }
-        lastFrameCount = m.framesProcessed;
       }
     } catch (err) {
       /* Ignore polling errors */
@@ -279,7 +283,11 @@ function stopMetricsPolling() {
     clearInterval(metricsInterval);
     metricsInterval = null;
   }
-  /* Reset meters */
+  noInputPollCount = 0;
+  if (meterHint) {
+    meterHint.textContent = "";
+    meterHint.classList.add("hidden");
+  }
   inputMeter.style.width = "0%";
   outputMeter.style.width = "0%";
   vadBar.style.width = "0%";
@@ -290,11 +298,14 @@ function stopMetricsPolling() {
   gateText.textContent = "--";
 }
 
-/** Convert RMS [0..1] to a display percentage (log-scaled). */
+/** Convert RMS [0..1] to a display percentage (log-scaled).
+ *  Hard gate below -60 dB so idle mic noise floor (~-70 to -80 dB) shows 0%.
+ *  Active speech (-50 dB and louder) produces clear, proportional bar movement.
+ */
 function rmsToPercent(rms) {
-  if (rms <= 0.0001) return 0;
-  /* Map -60dB..0dB to 0..100% */
-  const db = 20 * Math.log10(Math.max(rms, 0.000001));
+  if (rms <= 0.001) return 0; // Gate at -60 dB — anything quieter = silence
+  const db = 20 * Math.log10(rms);
+  /* Map -60 dB..0 dB → 0..100% */
   return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
 }
 
@@ -312,50 +323,14 @@ function formatFrameCount(n) {
   return String(n);
 }
 
-/* ── Processing Log ──────────────────────────────────────────────────────── */
-
-function addLog(message, type) {
-  const entry = document.createElement("div");
-  entry.className = "log-entry";
-
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString("en-US", { hour12: false });
-
-  entry.innerHTML =
-    '<span class="log-time">[' +
-    timeStr +
-    "]</span> " +
-    '<span class="log-' +
-    (type || "ok") +
-    '">' +
-    message +
-    "</span>";
-
-  logContainer.appendChild(entry);
-  logLines++;
-
-  /* Trim old entries */
-  while (logLines > MAX_LOG_LINES) {
-    logContainer.removeChild(logContainer.firstChild);
-    logLines--;
-  }
-
-  /* Auto-scroll to bottom */
-  logContainer.scrollTop = logContainer.scrollHeight;
-}
-
 /* ── UI Update Helpers ───────────────────────────────────────────────────── */
 
 function updateUI(running, level) {
   isRunning = running;
 
   toggleBtn.classList.toggle("on", running);
-  toggleBtn.classList.toggle("off", !running);
-  toggleBtn.querySelector(".toggle-label").textContent = running ? "ON" : "OFF";
 
-  toggleHint.textContent = running
-    ? "Noise cancellation active"
-    : "Click to enable noise cancellation";
+  toggleHint.textContent = running ? "Click to disable" : "Click to enable";
 
   statusDot.classList.toggle("active", running);
 
@@ -387,11 +362,13 @@ function updateUI(running, level) {
 }
 
 function showError(msg) {
+  if (!errorBar) return;
   errorBar.textContent = msg;
   errorBar.classList.remove("hidden");
 }
 
 function hideError() {
+  if (!errorBar) return;
   errorBar.classList.add("hidden");
   errorBar.textContent = "";
 }
@@ -399,30 +376,24 @@ function hideError() {
 /* ── VB-Cable Detection & Auto-Select ────────────────────────────────────── */
 
 /**
- * Detect VB-Cable in the output device list.
- * If found: auto-select it and show a green guide.
- * If not found: show a yellow guide with download link.
+ * Detect VB-Cable in the device lists.
+ * If found in output: auto-select it and show green guide.
+ * If not found: show yellow guide with download link.
  */
 function detectVBCable(outputDevices) {
+  /* Hide both banners initially */
+  vbCableFound.classList.add("hidden");
+  vbCableMissing.classList.add("hidden");
+
   const cableDevice = outputDevices.find((d) =>
     d.name.toLowerCase().includes("cable"),
   );
 
   if (cableDevice) {
-    /* Auto-select VB-Cable as the output device. */
     outputSelect.value = String(cableDevice.index);
     vbCableFound.classList.remove("hidden");
-    vbCableMissing.classList.add("hidden");
-    addLog(
-      "VB-Cable detected (device #" +
-        cableDevice.index +
-        "). Auto-selected as output.",
-      "ok",
-    );
   } else {
-    vbCableFound.classList.add("hidden");
     vbCableMissing.classList.remove("hidden");
-    addLog("VB-Cable not found. Install it for Zoom/Meet/OBS support.", "warn");
   }
 }
 

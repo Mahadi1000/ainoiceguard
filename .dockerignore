@@ -1,0 +1,9 @@
+# Avoid copying build artifacts and deps into the image (faster build, smaller context)
+deps/
+build/
+native/build/
+node_modules/
+.git/
+dist/
+*.log
+.DS_Store

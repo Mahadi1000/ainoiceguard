@@ -131,6 +131,30 @@ npm run dist:full
 
 Output is placed in `dist/`.
 
+### Docker (Linux build from any host)
+
+The Windows build relies on **CLI tools and paths** (CMake, Visual Studio, vswhere). On Linux or macOS the toolchain is different (gcc, make, ALSA/CoreAudio), so the same script would not work. **Docker** gives you a single, fixed Linux environment so you can build the **Linux** native addon from Windows, Mac, or Linux without installing CMake/gcc on the host.
+
+| Goal | How |
+|------|-----|
+| **Linux** `.node` from any OS | Use the provided Docker image; run with your project mounted. |
+| **Windows** `.node` | Use the host: run `npm run build:native` on Windows (PowerShell + VS + CMake). |
+| **macOS** `.node` | Use the host: install Xcode CLI tools + CMake, then run `./scripts/build-native-linux.sh` on a Mac (same script as Linux). |
+
+**Build the Linux addon with Docker:**
+
+```bash
+# Build the image (once)
+docker build -t noiseguard-build .
+
+# Run the build (project dir = current directory; output appears in ./build and ./deps)
+docker run --rm -v "$(pwd):/app" noiseguard-build
+```
+
+On **Windows (PowerShell)** use: `docker run --rm -v "${PWD}:/app" noiseguard-build`
+
+Result: `build/Release/ainoiceguard.node` and `deps/install/` for **Linux**. Use the same Node/Electron version when running the app. Docker does **not** produce a Windows or macOS binary; for those, build on the target OS (or use a macOS CI runner for Mac).
+
 ---
 
 ## Run

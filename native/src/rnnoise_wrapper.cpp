@@ -32,20 +32,24 @@ namespace ainoiceguard {
 
 /*
  * Gate CLOSE coefficient (attack in compressor terms).
- * 0.40 → gate closes in ~1-2 frames (~15ms).
- * Fast close = noise is cut almost instantly after speech ends + hold.
+ * 0.30 → gate closes over ~3-4 frames (~35ms).
+ * Moderate close speed avoids cutting trailing speech.
  */
-static constexpr float kGateCloseCoeff = 0.40f;
+static constexpr float kGateCloseCoeff = 0.30f;
 
 /*
  * Gate OPEN coefficient (release in compressor terms).
- * 0.15 → gate opens over ~5-6 frames (~60ms).
- * Moderate speed: first syllable gets a slight fade-in rather than a pop.
+ * 0.25 → gate opens over ~3-4 frames (~35ms).
+ * Fast enough that the first syllable isn't noticeably clipped.
  */
-static constexpr float kGateOpenCoeff = 0.15f;
+static constexpr float kGateOpenCoeff = 0.25f;
 
-/* Gate closes to absolute zero (soft silence is injected separately). */
-static constexpr float kMinGateGain = 0.0f;
+/*
+ * Minimum gate gain (~-54 dBFS).
+ * Never close to absolute zero: prevents total silence artifacts and
+ * keeps a faint signal for conferencing apps that detect silence.
+ */
+static constexpr float kMinGateGain = 0.002f;
 
 /*
  * HOLD TIME: frames to keep the gate open after the last speech frame.
@@ -81,11 +85,11 @@ static constexpr float kTrackingAlpha = 0.005f;
 /*
  * Gate threshold = noiseFloor × kFloorMultiplier.
  * Signals below this (AND low VAD) get gated out.
- * 1.5 = gate stays closed until the signal is 50% louder than the floor.
- * Increase to 2.0 for more aggressive silencing; decrease to 1.2 for
+ * 1.3 = gate closes when signal is only 30% above the noise floor.
+ * Increase to 1.5-2.0 for more aggressive silencing; decrease to 1.1 for
  * more sensitivity (at the cost of occasionally letting noise through).
  */
-static constexpr float kFloorMultiplier = 1.5f;
+static constexpr float kFloorMultiplier = 1.3f;
 
 /*
  * Absolute minimum noise floor (~-70 dBFS).
@@ -105,16 +109,16 @@ static constexpr float kFallbackThreshold = 0.002f;
 /*
  * Clamp multiplier: samples below (noiseFloor × kSpectralClampMult)
  * are forced to exact zero. Applied ONLY when VAD is low and the gate
- * is mostly closed, so speech harmonics are never touched.
+ * is fully closed, so speech harmonics are never touched.
  */
-static constexpr float kSpectralClampMult = 2.0f;
+static constexpr float kSpectralClampMult = 1.5f;
 
 /*
  * Gate gain threshold for applying the spectral clamp.
  * Clamp is active only when smoothGain_ < this value.
- * 0.3 = only clamp during the closing/closed phase, never during speech.
+ * 0.05 = only clamp when the gate is nearly fully closed.
  */
-static constexpr float kClampGateThreshold = 0.3f;
+static constexpr float kClampGateThreshold = 0.05f;
 
 /* ── Soft Silence (Comfort Noise) ────────────────────────────────────────── */
 
@@ -364,12 +368,18 @@ void RNNoiseWrapper::updateNoiseFloor(float postRms, float vad) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 float RNNoiseWrapper::computeGateTarget(float vad, float postRms) {
+  /*
+   * During calibration the noise floor is still being learned.
+   * Keep the gate fully open so the user hears audio immediately
+   * and the floor converges on actual ambient noise, not silence.
+   */
+  if (calibrationFrames_ < kCalibrationPeriod) {
+    holdCounter_ = kHoldFrames;
+    return 1.0f;
+  }
+
   float vadThresh = vadThreshold_.load(std::memory_order_relaxed);
 
-  /*
-   * Dynamic gate threshold from the learned noise floor.
-   * Before calibration completes, use a safe fallback.
-   */
   float gateThresh = (noiseFloorEstimate_ > kAbsoluteMinFloor)
       ? noiseFloorEstimate_ * kFloorMultiplier
       : kFallbackThreshold;
@@ -383,7 +393,7 @@ float RNNoiseWrapper::computeGateTarget(float vad, float postRms) {
    * the threshold but is obviously not noise based on energy.
    */
   bool speechByEnergy = (vad >= vadThresh - kVadHysteresis)
-                     && (postRms > gateThresh * 2.0f);
+                     && (postRms > gateThresh * 1.5f);
 
   if (speechByVad || speechByEnergy) {
     holdCounter_ = kHoldFrames;
@@ -397,7 +407,7 @@ float RNNoiseWrapper::computeGateTarget(float vad, float postRms) {
 
   /*
    * No speech, hold expired. Close the gate.
-   * If energy is well below the threshold: fully closed.
+   * If energy is well below the threshold: close to minimum.
    * If energy is near the threshold: partial gain for smooth transition.
    */
   if (postRms < gateThresh) {
@@ -420,13 +430,16 @@ float RNNoiseWrapper::computeGateTarget(float vad, float postRms) {
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 void RNNoiseWrapper::spectralClamp(float* frame, float vad) {
+  /* Never clamp during calibration -- floor is unreliable. */
+  if (calibrationFrames_ < kCalibrationPeriod) return;
+
   float vadThresh = vadThreshold_.load(std::memory_order_relaxed);
 
   if (vad >= vadThresh || smoothGain_ > kClampGateThreshold) return;
 
   float clampThresh = std::max(
       noiseFloorEstimate_ * kSpectralClampMult,
-      kAbsoluteMinFloor * 3.0f
+      kAbsoluteMinFloor * 2.0f
   );
 
   for (size_t i = 0; i < kRNNoiseFrameSize; i++) {

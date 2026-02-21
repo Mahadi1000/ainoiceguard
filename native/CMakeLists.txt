@@ -27,16 +27,18 @@ endif()
 include(FetchContent)
 
 # ── PortAudio ────────────────────────────────────────────────────────────────
-# Build as static lib. Enable WASAPI on Windows.
+# Build as static lib. On Windows enable WASAPI; on Linux/macOS use default (ALSA/CoreAudio).
 set(PA_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(PA_BUILD_STATIC ON CACHE BOOL "" FORCE)
-set(PA_USE_WASAPI ON CACHE BOOL "" FORCE)
-set(PA_USE_WDMKS OFF CACHE BOOL "" FORCE)
-set(PA_USE_DS OFF CACHE BOOL "" FORCE)
-set(PA_USE_WMME ON CACHE BOOL "" FORCE)
-set(PA_USE_ASIO OFF CACHE BOOL "" FORCE)
 set(PA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(PA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+if(WIN32)
+  set(PA_USE_WASAPI ON CACHE BOOL "" FORCE)
+  set(PA_USE_WDMKS OFF CACHE BOOL "" FORCE)
+  set(PA_USE_DS OFF CACHE BOOL "" FORCE)
+  set(PA_USE_WMME ON CACHE BOOL "" FORCE)
+  set(PA_USE_ASIO OFF CACHE BOOL "" FORCE)
+endif()
 
 FetchContent_Declare(
   portaudio
@@ -105,8 +107,10 @@ install(DIRECTORY "${rnnoise_SOURCE_DIR}/include/"
   FILES_MATCHING PATTERN "*.h"
 )
 
-# Also copy WASAPI-specific header from PortAudio (if PortAudio's install missed it).
-install(FILES "${portaudio_SOURCE_DIR}/src/hostapi/wasapi/pa_win_wasapi.h"
-  DESTINATION include/portaudio
-  OPTIONAL
-)
+# Windows: copy WASAPI header for the addon (if PortAudio's install missed it).
+if(WIN32)
+  install(FILES "${portaudio_SOURCE_DIR}/src/hostapi/wasapi/pa_win_wasapi.h"
+    DESTINATION include
+    OPTIONAL
+  )
+endif()

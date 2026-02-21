@@ -10,19 +10,33 @@
 
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const { createTray, destroyTray } = require("./tray");
 
 /* ── Load native addon ─────────────────────────────────────────────────────── */
 let addon;
 try {
-  const addonPath = path.join(
-    __dirname,
-    "..",
-    "build",
-    "Release",
-    "ainoiceguard.node",
-  );
+  const addonName = "ainoiceguard.node";
+  const rootDir = path.join(__dirname, "..");
+  const candidates = [
+    path.join(rootDir, "build", "Release", addonName),
+    path.join(rootDir, "native", "build", "Release", addonName),
+    path.join(
+      __dirname.replace("app.asar", "app.asar.unpacked"),
+      "..",
+      "build",
+      "Release",
+      addonName,
+    ),
+  ];
+
+  const addonPath = candidates.find((p) => fs.existsSync(p));
+  if (!addonPath) {
+    console.error("Native addon not found. Tried:", candidates);
+    process.exit(1);
+  }
   addon = require(addonPath);
+  console.log("Loaded native addon from:", addonPath);
 } catch (err) {
   console.error("Failed to load native addon:", err.message);
   console.error('Did you run "npm run build:native" first?');
@@ -40,12 +54,13 @@ app.whenReady().then(() => {
 });
 
 /* Prevent app from quitting when all windows are closed (tray app behavior). */
-app.on("window-all-closed", (e) => {
-  e.preventDefault();
+app.on("window-all-closed", () => {
+  /* Intentionally empty: keep running in system tray. */
 });
 
 /* Clean shutdown: stop audio engine before quitting. */
 app.on("before-quit", () => {
+  app.isQuitting = true;
   console.log("Shutting down audio engine...");
   try {
     if (addon.isRunning()) {
@@ -60,13 +75,22 @@ app.on("before-quit", () => {
 /* ── Main Window (Hidden) ──────────────────────────────────────────────────── */
 
 function createMainWindow() {
+  const { screen } = require("electron");
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenW, height: screenH } = primaryDisplay.workAreaSize;
+
+  const winW = 380;
+  const winH = 640;
+
   mainWindow = new BrowserWindow({
-    width: 380,
-    height: 720,
-    show: false /* Start hidden -- tray icon shows the window. */,
-    frame: false /* Frameless for a clean tray-popup look. */,
+    width: winW,
+    height: winH,
+    x: screenW - winW - 12,
+    y: screenH - winH - 12,
+    show: false,
+    frame: false,
     resizable: false,
-    skipTaskbar: true /* Don't show in taskbar. */,
+    skipTaskbar: false,
     transparent: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -77,17 +101,16 @@ function createMainWindow() {
 
   mainWindow.loadFile(path.join(__dirname, "index.html"));
 
+  /* Show the window as soon as content is ready (covers exe double-click launch). */
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
   /* Hide instead of close so the tray can re-show it. */
   mainWindow.on("close", (e) => {
     if (!app.isQuitting) {
       e.preventDefault();
-      mainWindow.hide();
-    }
-  });
-
-  /* Lose focus -> hide (tray popup behavior). */
-  mainWindow.on("blur", () => {
-    if (mainWindow.isVisible()) {
       mainWindow.hide();
     }
   });
