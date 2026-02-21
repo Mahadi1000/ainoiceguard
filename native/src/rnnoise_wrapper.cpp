@@ -45,11 +45,11 @@ static constexpr float kGateCloseCoeff = 0.30f;
 static constexpr float kGateOpenCoeff = 0.25f;
 
 /*
- * Minimum gate gain (~-54 dBFS).
- * Never close to absolute zero: prevents total silence artifacts and
- * keeps a faint signal for conferencing apps that detect silence.
+ * Minimum gate gain (~-66 dBFS).
+ * Very low to avoid audible buzz from residual mic/electrical noise;
+ * still non-zero to prevent hard clicks and "no audio" detection.
  */
-static constexpr float kMinGateGain = 0.002f;
+static constexpr float kMinGateGain = 0.0005f;
 
 /*
  * HOLD TIME: frames to keep the gate open after the last speech frame.
@@ -123,18 +123,16 @@ static constexpr float kClampGateThreshold = 0.05f;
 /* ── Soft Silence (Comfort Noise) ────────────────────────────────────────── */
 
 /*
- * Comfort noise amplitude: -60 dBFS = 0.001.
- * Just enough to prevent the "dead channel" / pressure-drop feeling
- * in headphones. Inaudible in speakers.
+ * Comfort noise amplitude: -70 dBFS = 0.0003.
+ * Very low to avoid audible buzz/hiss; still prevents dead silence in headphones.
  */
-static constexpr float kSoftSilenceLevel = 0.001f;
+static constexpr float kSoftSilenceLevel = 0.0003f;
 
 /*
  * 1-pole lowpass shaping coefficient for comfort noise.
- * 0.7 → shapes raw LFSR white noise into a warmer, less "hissy" sound.
- * Higher = more low-frequency content.
+ * 0.92 → strong lowpass so noise is sub-bass rumble, not mid/high buzz or hiss.
  */
-static constexpr float kNoiseShapeCoeff = 0.7f;
+static constexpr float kNoiseShapeCoeff = 0.92f;
 
 /*
  * Gate gain below which soft silence is injected.
@@ -511,9 +509,8 @@ float RNNoiseWrapper::computeRms(const float* buf, size_t len) {
 
 /**
  * LFSR-based comfort noise with 1-pole lowpass shaping.
- * The Xorshift32 LFSR generates white noise; the 1-pole filter
- * rolls off high frequencies to produce a warmer, less fatiguing sound.
- * Final amplitude is kSoftSilenceLevel (~-60 dBFS).
+ * Strong lowpass (kNoiseShapeCoeff) keeps energy in sub-bass to avoid
+ * audible buzz/hiss. Final amplitude is kSoftSilenceLevel (~-70 dBFS).
  */
 float RNNoiseWrapper::comfortNoiseSample() {
   noiseState_ ^= noiseState_ << 13;
