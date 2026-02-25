@@ -48,7 +48,6 @@ const vbCableLink = document.getElementById("vbCableLink");
 
 let isRunning = false;
 let metricsInterval = null;
-let lastFrameCount = 0;
 let noInputPollCount = 0;
 
 /* ── Initialize ──────────────────────────────────────────────────────────── */
@@ -217,7 +216,6 @@ async function restartIfRunning() {
 function startMetricsPolling() {
   if (metricsInterval) return;
 
-  lastFrameCount = 0;
   noInputPollCount = 0;
   metricsInterval = setInterval(async () => {
     try {
@@ -246,8 +244,6 @@ function startMetricsPolling() {
 
       framesText.textContent = formatFrameCount(framesProcessed);
       gateText.textContent = Number.isFinite(gateGain) ? (gateGain * 100).toFixed(0) + "%" : "--";
-
-      lastFrameCount = framesProcessed;
 
       /* Hints: no input for ~2s, or output is Mute */
       if (meterHint) {
@@ -298,30 +294,7 @@ function stopMetricsPolling() {
   gateText.textContent = "--";
 }
 
-/** Convert RMS [0..1] to a display percentage (log-scaled).
- *  Hard gate below -60 dB so idle mic noise floor (~-70 to -80 dB) shows 0%.
- *  Active speech (-50 dB and louder) produces clear, proportional bar movement.
- */
-function rmsToPercent(rms) {
-  if (rms <= 0.001) return 0; // Gate at -60 dB — anything quieter = silence
-  const db = 20 * Math.log10(rms);
-  /* Map -60 dB..0 dB → 0..100% */
-  return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
-}
-
-/** Convert RMS to dB string. */
-function rmsToDb(rms) {
-  if (rms <= 0.0001) return "-\u221E";
-  const db = 20 * Math.log10(rms);
-  return db.toFixed(0) + "dB";
-}
-
-/** Format large frame counts with K/M suffix. */
-function formatFrameCount(n) {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
-  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
-  return String(n);
-}
+const { rmsToPercent, rmsToDb, formatFrameCount } = window.metricsUtils;
 
 /* ── UI Update Helpers ───────────────────────────────────────────────────── */
 

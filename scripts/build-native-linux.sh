@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# NoiseGuard - Native Build Script (Linux / macOS)
+# Ainoiceguard - Native Build Script (Linux / macOS)
 #
 # Prerequisites: cmake, build-essential (gcc/g++), node, python3.
 # On Debian/Ubuntu: apt-get install build-essential cmake
@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 echo "============================================"
-echo "  NoiseGuard Native Build (Linux/macOS)"
+echo "  Ainoiceguard Native Build (Linux/macOS)"
 echo "============================================"
 echo ""
 

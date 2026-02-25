@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run check:package
+      - run: npm run test:ci
+      - run: bash -n scripts/build-native-linux.sh
+
+  script-parse-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate PowerShell build script syntax
+        run: |
+          $content = Get-Content scripts/build-native.ps1 -Raw
+          [void][ScriptBlock]::Create($content)

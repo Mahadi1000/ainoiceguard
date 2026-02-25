@@ -1,6 +1,6 @@
 # Ainoiceguard
 
-A real-time noise cancellation desktop app for Windows, built with Electron + a native C++ addon. It captures audio from your microphone, runs it through the [RNNoise](https://github.com/xiph/rnnoise) neural network, and routes the clean output to a virtual cable (e.g. VB-Cable) that other apps can use as a microphone.
+A real-time noise cancellation desktop app for Windows, Linux, and macOS, built with Electron + a native C++ addon. It captures audio from your microphone, runs it through the [RNNoise](https://github.com/xiph/rnnoise) neural network, and routes the clean output to a virtual cable (e.g. VB-Cable) that other apps can use as a microphone.
 
 > Inspired by Krisp. Fully open-source.
 
@@ -24,7 +24,7 @@ A real-time noise cancellation desktop app for Windows, built with Electron + a 
 ## Features
 
 - Real-time RNNoise-based noise suppression (neural network, 480-sample frames @ 48 kHz)
-- WASAPI backend via PortAudio (exclusive or shared mode)
+- PortAudio backend (WASAPI on Windows, CoreAudio on macOS, ALSA/PipeWire on Linux)
 - Lock-free SPSC ring buffer between capture and processing threads
 - System tray UI — device selector, suppression slider, on/off toggle
 - Auto-restart on device disconnect with exponential backoff
@@ -76,16 +76,21 @@ ainoiceguard.node  (N-API addon)
 
 ## Prerequisites
 
-| Tool                           | Version | Notes                                                      |
-| ------------------------------ | ------- | ---------------------------------------------------------- |
-| Windows                        | 10 / 11 | WASAPI required                                            |
-| Node.js                        | 20 LTS+ | [nodejs.org](https://nodejs.org)                           |
-| npm                            | 10+     | Bundled with Node.js                                       |
-| Python                         | 3.x     | Required by node-gyp                                       |
-| Visual Studio 2022 Build Tools | Latest  | "Desktop development with C++" workload                    |
-| CMake                          | 3.20+   | Included in VS or [cmake.org](https://cmake.org/download/) |
+| OS                             | Version | Notes                                                                  |
+| ------------------------------ | ------- | ---------------------------------------------------------------------- |
+| Windows                        | 10 / 11 | Build native addon with `npm run build:native` (PowerShell + VS 2022) |
+| Linux                          | Modern distro | Build native addon with `npm run build:native:unix`              |
+| macOS                          | 12+     | Build native addon with `npm run build:native:unix` (Xcode CLI tools) |
+| Node.js                        | 20 LTS+ | [nodejs.org](https://nodejs.org)                                       |
+| npm                            | 10+     | Bundled with Node.js                                                   |
+| Python                         | 3.x     | Required by node-gyp                                                   |
+| CMake                          | 3.20+   | [cmake.org](https://cmake.org/download/)                               |
 
-> **Tip:** When installing Visual Studio Build Tools, make sure to check **"Desktop development with C++"** and **"C++ CMake tools for Windows"**.
+> **Windows tip:** install Visual Studio Build Tools with **"Desktop development with C++"** and **"C++ CMake tools for Windows"**.
+>
+> **Linux tip:** install `build-essential` and ALSA development headers (`libasound2-dev`).
+>
+> **macOS tip:** install Xcode command line tools (`xcode-select --install`).
 
 ---
 
@@ -104,32 +109,56 @@ cd ainoiceguard
 npm install
 ```
 
-### 3. Build the native addon
+### 3. Build the native addon (host OS)
 
-This step fetches PortAudio and RNNoise via CMake (FetchContent), compiles them as static libs, then compiles the `.node` addon with node-gyp.
+This step fetches PortAudio and RNNoise via CMake, compiles them as static libs, then compiles the `.node` addon with node-gyp.
 
+**Windows**
 ```powershell
 npm run build:native
 ```
 
-Internally this runs `scripts/build-native.ps1` which:
+**Linux / macOS**
+```bash
+npm run build:native:unix
+```
 
-1. Runs CMake to build PortAudio + RNNoise into `deps/install/`
-2. Runs `node-gyp rebuild` to compile `ainoiceguard.node`
-
-### 4. Rebuild for Electron ABI (required after `npm install`)
+### 4. Rebuild for Electron ABI (required after native build)
 
 ```bash
 npm run rebuild:electron
 ```
 
-### 5. (Optional) Build a distributable installer
+### 5. Build distributables by OS (separate output folders)
 
 ```bash
-npm run dist:full
+# Windows -> dist/win
+npm run dist:win
+
+# Linux -> dist/linux
+npm run dist:linux
+
+# macOS -> dist/mac
+npm run dist:mac
+
+# Host-aware wrapper (runs only compatible target on your current OS)
+npm run dist:all
 ```
 
-Output is placed in `dist/`.
+Convenience scripts:
+
+```bash
+# Build native + package for Windows
+npm run dist:full
+
+# Build native + package for Linux
+npm run dist:full:unix
+
+# Build native + package for macOS
+npm run dist:full:mac
+```
+
+Output folders are separated per OS under `dist/win`, `dist/linux`, and `dist/mac`.
 
 ### Docker (Linux build from any host)
 
@@ -153,7 +182,7 @@ docker run --rm -v "$(pwd):/app" noiseguard-build
 
 On **Windows (PowerShell)** use: `docker run --rm -v "${PWD}:/app" noiseguard-build`
 
-Result: `build/Release/ainoiceguard.node` and `deps/install/` for **Linux**. Use the same Node/Electron version when running the app. Docker does **not** produce a Windows or macOS binary; for those, build on the target OS (or use a macOS CI runner for Mac).
+Result: `build/Release/ainoiceguard.node` and `deps/install/` for **Linux**. Use the same Node/Electron version when running the app. Docker does **not** produce a Windows or macOS binary; for those, build on the target OS (or use an OS matrix in CI).
 
 ---
 
@@ -163,7 +192,7 @@ Result: `build/Release/ainoiceguard.node` and `deps/install/` for **Linux**. Use
 npm start
 ```
 
-The app runs in the system tray. No visible window — look for the tray icon in the taskbar notification area.
+The app starts in the system tray with the window hidden by default. Click the tray icon or use the tray menu to open the window.
 
 > If the tray icon does not appear, check that Electron is finding `build/Release/ainoiceguard.node`. Run `npm run rebuild:electron` if you get a "wrong ABI" error.
 
@@ -289,8 +318,8 @@ Open an issue with the `enhancement` label. Describe:
 Planned improvements (contributions welcome):
 
 - [ ] **DeepFilterNet** as an optional higher-quality DSP backend
-- [ ] **macOS support** via CoreAudio backend
-- [ ] **Linux support** via ALSA / PipeWire
+- [x] **macOS support** packaging via CoreAudio-capable build flow
+- [x] **Linux support** packaging via ALSA / PipeWire-capable build flow
 - [ ] **AGC / limiter** post-processing stage
 - [ ] **Noise profiles / presets** (office, street, keyboard, etc.)
 - [ ] **Latency measurement** display in UI
