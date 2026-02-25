@@ -9,7 +9,7 @@
     "build:native": "powershell -ExecutionPolicy Bypass -File ./scripts/build-native.ps1",
     "build:native:unix": "bash ./scripts/build-native-linux.sh",
     "rebuild:electron": "electron-rebuild -f -w ainoiceguard",
-    "dist": "npm run dist:win",
+    "dist": "npm run dist:all",
     "dist:win": "electron-builder --win --x64 --config.directories.output=dist/win",
     "dist:linux": "electron-builder --linux AppImage deb tar.gz --x64 --config.directories.output=dist/linux",
     "dist:mac": "electron-builder --mac dmg zip --x64 --arm64 --config.directories.output=dist/mac",

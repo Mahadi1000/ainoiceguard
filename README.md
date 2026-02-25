@@ -38,7 +38,7 @@ A real-time noise cancellation desktop app for Windows, Linux, and macOS, built 
 Physical Mic
     │
     ▼
-PortAudio WASAPI Capture
+PortAudio Capture (host backend)
     │  (raw float32, 480 samples)
     ▼
 SPSC Ring Buffer (lock-free)
@@ -50,7 +50,7 @@ Processing Thread ──► RNNoise (rnnoise_process_frame)
 Output Ring Buffer
     │
     ▼
-PortAudio WASAPI Output
+PortAudio Output (host backend)
     │
     ├──► VB-Cable Input  ──► Discord / Zoom / Teams (as virtual mic)
     └──► Speaker / Headphones (monitor)
@@ -159,6 +159,7 @@ npm run dist:full:mac
 ```
 
 Output folders are separated per OS under `dist/win`, `dist/linux`, and `dist/mac`.
+Default `npm run dist` now calls the host-aware wrapper (`dist:all`).
 
 ### Docker (Linux build from any host)
 
