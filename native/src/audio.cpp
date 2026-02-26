@@ -400,7 +400,7 @@ void AudioEngine::processingLoop() {
     } else {
       /*
        * Not enough data yet. Sleep briefly to avoid spinning at 100% CPU.
-       * 1ms sleep is fine: at 48kHz, a 480-sample frame arrives every 10ms,
+       * 0.5ms sleep is fine: at 48kHz, a 480-sample frame arrives every 10ms,
        * so we'll check ~10 times per frame period. The ring buffer smooths
        * any scheduling jitter.
        */

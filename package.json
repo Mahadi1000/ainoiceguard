@@ -9,14 +9,17 @@
     "build:native": "powershell -ExecutionPolicy Bypass -File ./scripts/build-native.ps1",
     "build:native:unix": "bash ./scripts/build-native-linux.sh",
     "rebuild:electron": "electron-rebuild -f -w ainoiceguard",
-    "dist": "npm run dist:win",
+    "dist": "npm run dist:all",
     "dist:win": "electron-builder --win --x64 --config.directories.output=dist/win",
     "dist:linux": "electron-builder --linux AppImage deb tar.gz --x64 --config.directories.output=dist/linux",
     "dist:mac": "electron-builder --mac dmg zip --x64 --arm64 --config.directories.output=dist/mac",
-    "dist:all": "npm run dist:win && npm run dist:linux && npm run dist:mac",
+    "dist:all": "node ./scripts/dist-all.js",
     "dist:full": "npm run build:native && npm run rebuild:electron && npm run dist:win",
     "dist:full:unix": "npm run build:native:unix && npm run rebuild:electron && npm run dist:linux",
-    "dist:full:mac": "npm run build:native:unix && npm run rebuild:electron && npm run dist:mac"
+    "dist:full:mac": "npm run build:native:unix && npm run rebuild:electron && npm run dist:mac",
+    "test": "node --test test/**/*.test.js",
+    "test:ci": "npm run test",
+    "check:package": "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')\""
   },
   "keywords": [
     "noise-cancellation",

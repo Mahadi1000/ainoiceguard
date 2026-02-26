@@ -34,4 +34,7 @@ contextBridge.exposeInMainWorld("ainoiceguard", {
 
   /** Open a URL in the system's default browser. */
   openExternal: (url) => ipcRenderer.invoke("app:open-external", url),
+
+  /** Pure utility functions for converting audio metrics. */
+  metricsUtils: require("./metrics-utils"),
 });

@@ -11,7 +11,7 @@
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { createTray, destroyTray } = require("./tray");
+const { createTray, destroyTray, updateTrayMenu } = require("./tray");
 
 /* ── Load native addon ─────────────────────────────────────────────────────── */
 let addon;
@@ -39,7 +39,8 @@ try {
   console.log("Loaded native addon from:", addonPath);
 } catch (err) {
   console.error("Failed to load native addon:", err.message);
-  console.error('Did you run "npm run build:native" first?');
+  const nativeBuildHint = process.platform === "win32" ? "npm run build:native" : "npm run build:native:unix";
+  console.error(`Did you run "${nativeBuildHint}" first?`);
   process.exit(1);
 }
 
@@ -101,12 +102,6 @@ function createMainWindow() {
 
   mainWindow.loadFile(path.join(__dirname, "index.html"));
 
-  /* Show the window as soon as content is ready (covers exe double-click launch). */
-  mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
-    mainWindow.focus();
-  });
-
   /* Hide instead of close so the tray can re-show it. */
   mainWindow.on("close", (e) => {
     if (!app.isQuitting) {
@@ -141,8 +136,10 @@ ipcMain.handle("audio:start", (_event, inputIdx, outputIdx) => {
       outputIdx !== undefined ? outputIdx : -1,
     );
     if (errMsg && errMsg.length > 0) {
+      updateTrayMenu(false);
       return { success: false, error: errMsg };
     }
+    updateTrayMenu(true);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -155,6 +152,7 @@ ipcMain.handle("audio:start", (_event, inputIdx, outputIdx) => {
 ipcMain.handle("audio:stop", () => {
   try {
     addon.stop();
+    updateTrayMenu(false);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };

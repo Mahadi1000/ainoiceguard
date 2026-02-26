@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run check:package
+      - run: npm run test:ci
+      - run: bash -n scripts/build-native-linux.sh
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libasound2-dev
+      - name: Build native addon
+        run: bash ./scripts/build-native-linux.sh
+      - name: Verify addon artifact
+        run: test -f build/Release/ainoiceguard.node
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install cmake
+        run: brew install cmake
+      - name: Build native addon
+        run: bash ./scripts/build-native-linux.sh
+      - name: Verify addon artifact
+        run: test -f build/Release/ainoiceguard.node
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build native addon
+        run: powershell -ExecutionPolicy Bypass -File ./scripts/build-native.ps1
+      - name: Verify addon artifact
+        run: Test-Path build/Release/ainoiceguard.node

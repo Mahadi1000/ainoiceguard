@@ -1,6 +1,6 @@
 # Ainoiceguard
 
-A real-time noise cancellation desktop app for Windows, built with Electron + a native C++ addon. It captures audio from your microphone, runs it through the [RNNoise](https://github.com/xiph/rnnoise) neural network, and routes the clean output to a virtual cable (e.g. VB-Cable) that other apps can use as a microphone.
+A real-time noise cancellation desktop app for Windows, Linux, and macOS, built with Electron + a native C++ addon. It captures audio from your microphone, runs it through the [RNNoise](https://github.com/xiph/rnnoise) neural network, and routes the clean output to a virtual cable (e.g. VB-Cable) that other apps can use as a microphone.
 
 > Inspired by Krisp. Fully open-source.
 
@@ -24,7 +24,7 @@ A real-time noise cancellation desktop app for Windows, built with Electron + a 
 ## Features
 
 - Real-time RNNoise-based noise suppression (neural network, 480-sample frames @ 48 kHz)
-- WASAPI backend via PortAudio (exclusive or shared mode)
+- PortAudio backend (WASAPI on Windows, CoreAudio on macOS, ALSA/PipeWire on Linux)
 - Lock-free SPSC ring buffer between capture and processing threads
 - System tray UI — device selector, suppression slider, on/off toggle
 - Auto-restart on device disconnect with exponential backoff
@@ -38,7 +38,7 @@ A real-time noise cancellation desktop app for Windows, built with Electron + a 
 Physical Mic
     │
     ▼
-PortAudio WASAPI Capture
+PortAudio Capture (host backend)
     │  (raw float32, 480 samples)
     ▼
 SPSC Ring Buffer (lock-free)
@@ -50,7 +50,7 @@ Processing Thread ──► RNNoise (rnnoise_process_frame)
 Output Ring Buffer
     │
     ▼
-PortAudio WASAPI Output
+PortAudio Output (host backend)
     │
     ├──► VB-Cable Input  ──► Discord / Zoom / Teams (as virtual mic)
     └──► Speaker / Headphones (monitor)
@@ -140,6 +140,9 @@ npm run dist:linux
 
 # macOS -> dist/mac
 npm run dist:mac
+
+# Host-aware wrapper (runs only compatible target on your current OS)
+npm run dist:all
 ```
 
 Convenience scripts:
@@ -156,6 +159,7 @@ npm run dist:full:mac
 ```
 
 Output folders are separated per OS under `dist/win`, `dist/linux`, and `dist/mac`.
+Default `npm run dist` now calls the host-aware wrapper (`dist:all`).
 
 ### Docker (Linux build from any host)
 
@@ -179,7 +183,7 @@ docker run --rm -v "$(pwd):/app" noiseguard-build
 
 On **Windows (PowerShell)** use: `docker run --rm -v "${PWD}:/app" noiseguard-build`
 
-Result: `build/Release/ainoiceguard.node` and `deps/install/` for **Linux**. Use the same Node/Electron version when running the app. Docker does **not** produce a Windows or macOS binary; for those, build on the target OS (or use a macOS CI runner for Mac).
+Result: `build/Release/ainoiceguard.node` and `deps/install/` for **Linux**. Use the same Node/Electron version when running the app. Docker does **not** produce a Windows or macOS binary; for those, build on the target OS (or use an OS matrix in CI).
 
 ---
 
@@ -189,7 +193,7 @@ Result: `build/Release/ainoiceguard.node` and `deps/install/` for **Linux**. Use
 npm start
 ```
 
-The app runs in the system tray. No visible window — look for the tray icon in the taskbar notification area.
+The app starts in the system tray with the window hidden by default. Click the tray icon or use the tray menu to open the window.
 
 > If the tray icon does not appear, check that Electron is finding `build/Release/ainoiceguard.node`. Run `npm run rebuild:electron` if you get a "wrong ABI" error.
 
@@ -315,8 +319,8 @@ Open an issue with the `enhancement` label. Describe:
 Planned improvements (contributions welcome):
 
 - [ ] **DeepFilterNet** as an optional higher-quality DSP backend
-- [ ] **macOS support** via CoreAudio backend
-- [ ] **Linux support** via ALSA / PipeWire
+- [x] **macOS support** packaging via CoreAudio-capable build flow
+- [x] **Linux support** packaging via ALSA / PipeWire-capable build flow
 - [ ] **AGC / limiter** post-processing stage
 - [ ] **Noise profiles / presets** (office, street, keyboard, etc.)
 - [ ] **Latency measurement** display in UI
