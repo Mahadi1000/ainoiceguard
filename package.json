@@ -17,7 +17,7 @@
     "dist:full": "npm run build:native && npm run rebuild:electron && npm run dist:win",
     "dist:full:unix": "npm run build:native:unix && npm run rebuild:electron && npm run dist:linux",
     "dist:full:mac": "npm run build:native:unix && npm run rebuild:electron && npm run dist:mac",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/**/*.test.js",
     "test:ci": "npm run test",
     "check:package": "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')\""
   },

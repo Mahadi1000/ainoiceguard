@@ -294,7 +294,7 @@ function stopMetricsPolling() {
   gateText.textContent = "--";
 }
 
-const { rmsToPercent, rmsToDb, formatFrameCount } = window.metricsUtils;
+const { rmsToPercent, rmsToDb, formatFrameCount } = window.ainoiceguard.metricsUtils;
 
 /* ── UI Update Helpers ───────────────────────────────────────────────────── */
 
