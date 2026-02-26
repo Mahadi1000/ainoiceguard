@@ -23,7 +23,7 @@
     module.exports = api;
   }
 
-  if (typeof window !== "undefined") {
+  if (globalScope) {
     globalScope.metricsUtils = api;
   }
 })(typeof window !== "undefined" ? window : globalThis);

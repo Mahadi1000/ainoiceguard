@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { platform } = require('node:process')
 const { spawnSync } = require('node:child_process')
 
 const byPlatform = {
