@@ -10,7 +10,7 @@ Derived from the prior audit findings, converted into actionable issues with pri
 | ISSUE-004 | Improvement | P1 | Done | Added automated tests and `npm test` entrypoint. |
 | ISSUE-005 | Improvement | P2 | Done | `dist:all` now host-aware with explicit cross-OS guidance. |
 | ISSUE-006 | Improvement | P2 | Done | Native-addon load failure hint now points to OS-appropriate build command. |
-| ISSUE-007 | Improvement | P2 | Done | RNNoise dependency pinned to a fixed commit for reproducible builds. |
+| ISSUE-007 | Improvement | P2 | Backlog | Track pinning RNNoise dependency to a fixed commit for reproducible builds (currently follows `master` in CMake). |
 | ISSUE-008 | Improvement | P3 | Done | Processing-loop comment corrected to match actual sleep interval. |
 | ISSUE-009 | Improvement | P3 | Done | Removed unused renderer state and centralized meter utility functions. |
 | ISSUE-010 | Docs | P3 | Done | README wording updated for cross-platform support and packaging behavior. |
