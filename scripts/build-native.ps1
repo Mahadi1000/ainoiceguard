@@ -53,10 +53,6 @@ Write-Host ""
 # ── Step 1: Build C dependencies with CMake ──────────────────────────────────
 Write-Host "[1/3] Building PortAudio + RNNoise via CMake..." -ForegroundColor Yellow
 
-if (Test-Path $DEPS_BUILD) {
-    Write-Host "Removing stale CMake build directory: $DEPS_BUILD" -ForegroundColor Gray
-    Remove-Item -Recurse -Force $DEPS_BUILD
-}
 New-Item -ItemType Directory -Path $DEPS_BUILD -Force | Out-Null
 New-Item -ItemType Directory -Path $DEPS_INSTALL -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DEPS_INSTALL "lib") -Force | Out-Null
