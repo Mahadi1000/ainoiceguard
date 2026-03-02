@@ -215,6 +215,26 @@ Physical Mic  →  Ainoiceguard  →  CABLE Input  →  CABLE Output  →  Disco
 
 ---
 
+
+## CI Build & Release
+
+GitHub Actions runs a matrix build on **Ubuntu, macOS, and Windows** using Node.js 20 and `npm ci`.
+Each platform builds the native addon, packages OS-specific Electron artifacts, and uploads them as workflow artifacts.
+
+To publish release assets automatically:
+
+1. Create and push a semantic version tag:
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+2. The `release` job collects uploaded artifacts from all build jobs.
+3. A GitHub Release is created for that tag with attached Windows/Linux/macOS assets.
+
+For non-tag pushes and PRs, artifacts are still available from the workflow run summary.
+
+---
+
 ## Contributing
 
 Contributions are welcome — bug fixes, new features, platform ports, documentation improvements. Here is how to get started:
