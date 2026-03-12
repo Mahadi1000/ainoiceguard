@@ -61,30 +61,44 @@ New-Item -ItemType Directory -Path (Join-Path $DEPS_INSTALL "include") -Force | 
 $cmakeSource = Join-Path $ROOT "native"
 $configured = $false
 $usedNinjaFallback = $false
+$selectedGenerator = ""
 
-& $CMAKE_CMD -S $cmakeSource -B $DEPS_BUILD -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS_INSTALL
-if ($LASTEXITCODE -eq 0) {
-    $configured = $true
+# Always clear stale CMake cache/generator state before configuring.
+if (Test-Path $DEPS_BUILD) {
+    Remove-Item -Path $DEPS_BUILD -Recurse -Force -ErrorAction SilentlyContinue
 }
+New-Item -ItemType Directory -Path $DEPS_BUILD -Force | Out-Null
 
-if (-not $configured) {
-    Write-Host "Visual Studio generator failed, trying Ninja fallback..." -ForegroundColor Yellow
-    & $CMAKE_CMD -S $cmakeSource -B $DEPS_BUILD -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS_INSTALL
+$generators = @(
+    @{ Name = "Visual Studio 18 2026"; Args = @("-A", "x64") },
+    @{ Name = "Visual Studio 17 2022"; Args = @("-A", "x64") },
+    @{ Name = "Ninja"; Args = @() }
+)
+
+foreach ($g in $generators) {
+    # Reset configure directory before each generator attempt.
+    if (Test-Path $DEPS_BUILD) {
+        Remove-Item -Path $DEPS_BUILD -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Path $DEPS_BUILD -Force | Out-Null
+
+    Write-Host "Trying CMake generator: $($g.Name)" -ForegroundColor Gray
+    & $CMAKE_CMD -S $cmakeSource -B $DEPS_BUILD -G $g.Name @($g.Args) "-DCMAKE_BUILD_TYPE=Release" "-DCMAKE_INSTALL_PREFIX=$DEPS_INSTALL"
     if ($LASTEXITCODE -eq 0) {
         $configured = $true
-        $usedNinjaFallback = $true
-        & $CMAKE_CMD --build $DEPS_BUILD --config Release
-        if ($LASTEXITCODE -ne 0) { Write-Host "CMake build failed!" -ForegroundColor Red; exit 1 }
-        & $CMAKE_CMD --install $DEPS_BUILD --config Release
-        if ($LASTEXITCODE -ne 0) { Write-Host "CMake install failed!" -ForegroundColor Red; exit 1 }
+        $selectedGenerator = $g.Name
+        $usedNinjaFallback = $g.Name -eq "Ninja"
+        break
     }
 }
 
 if (-not $configured) {
-    Write-Host "CMake configure failed. Install Visual Studio 2022 Build Tools + Desktop C++ workload," -ForegroundColor Red
-    Write-Host "or install Ninja (https://ninja-build.org/) for the Ninja fallback generator." -ForegroundColor Red
+    Write-Host "CMake configure failed for all generators (VS 2026, VS 2022, Ninja)." -ForegroundColor Red
+    Write-Host "Install Visual Studio Build Tools with Desktop C++ workload or install Ninja (https://ninja-build.org/)." -ForegroundColor Red
     exit 1
 }
+
+Write-Host "Using CMake generator: $selectedGenerator" -ForegroundColor Green
 
 if (-not $usedNinjaFallback) {
     & $CMAKE_CMD --build $DEPS_BUILD --config Release
@@ -123,10 +137,10 @@ Write-Host "[3/3] Building native addon with node-gyp..." -ForegroundColor Yello
 $nativeDir = Join-Path $ROOT "native"
 Push-Location $nativeDir
 try {
-    npx node-gyp rebuild --release --msvs_version=2022
+    npx node-gyp rebuild --release
     if ($LASTEXITCODE -ne 0) {
         Write-Host "node-gyp build failed!" -ForegroundColor Red
-        Write-Host "Ensure Visual Studio 2022 Build Tools with Desktop C++ workload is installed." -ForegroundColor Yellow
+        Write-Host "Ensure Visual Studio Build Tools with Desktop C++ workload is installed." -ForegroundColor Yellow
         exit 1
     }
 } finally {

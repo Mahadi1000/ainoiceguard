@@ -54,8 +54,7 @@ FetchContent_MakeAvailable(portaudio)
 FetchContent_Declare(
   rnnoise
   GIT_REPOSITORY https://github.com/mumble-voip/rnnoise.git
-  GIT_TAG        7f44943b0cdd0481219777084ff57c4b6213b563
-  GIT_SHALLOW    TRUE
+  GIT_TAG        master
 )
 FetchContent_GetProperties(rnnoise)
 if(NOT rnnoise_POPULATED)
