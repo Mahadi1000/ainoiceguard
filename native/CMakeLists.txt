@@ -54,10 +54,8 @@ FetchContent_MakeAvailable(portaudio)
 FetchContent_Declare(
   rnnoise
   GIT_REPOSITORY https://github.com/mumble-voip/rnnoise.git
-  # Track the latest master of the Mumble rnnoise fork. This fork keeps
-  # the public rnnoise API but adds MSVC-friendly changes (USE_MALLOC).
-  # Use a non-shallow clone so CMake/Git never fails on missing objects.
-  GIT_TAG        master
+  GIT_TAG        7f44943b0cdd0481219777084ff57c4b6213b563
+  GIT_SHALLOW    TRUE
 )
 FetchContent_GetProperties(rnnoise)
 if(NOT rnnoise_POPULATED)

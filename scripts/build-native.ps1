@@ -53,11 +53,6 @@ Write-Host ""
 # ── Step 1: Build C dependencies with CMake ──────────────────────────────────
 Write-Host "[1/3] Building PortAudio + RNNoise via CMake..." -ForegroundColor Yellow
 
-# Always start from a clean CMake build directory to avoid generator mismatch.
-if (Test-Path $DEPS_BUILD) {
-    Remove-Item -Recurse -Force $DEPS_BUILD
-}
-
 New-Item -ItemType Directory -Path $DEPS_BUILD -Force | Out-Null
 New-Item -ItemType Directory -Path $DEPS_INSTALL -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DEPS_INSTALL "lib") -Force | Out-Null
@@ -67,23 +62,14 @@ $cmakeSource = Join-Path $ROOT "native"
 $configured = $false
 $usedNinjaFallback = $false
 
-# Primary: Visual Studio 18 2026 (VS 2026 Build Tools).
-# Explicitly set CMAKE_INSTALL_PREFIX so PortAudio installs into deps/install/
-& $CMAKE_CMD -S $cmakeSource -B $DEPS_BUILD -G "Visual Studio 18 2026" -A x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS_INSTALL"
+& $CMAKE_CMD -S $cmakeSource -B $DEPS_BUILD -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS_INSTALL
 if ($LASTEXITCODE -eq 0) {
     $configured = $true
 }
 
 if (-not $configured) {
     Write-Host "Visual Studio generator failed, trying Ninja fallback..." -ForegroundColor Yellow
-
-    # Clean the cache before switching generators to avoid CMake's generator mismatch error.
-    $cacheFile = Join-Path $DEPS_BUILD "CMakeCache.txt"
-    $cmakeFilesDir = Join-Path $DEPS_BUILD "CMakeFiles"
-    if (Test-Path $cacheFile) { Remove-Item $cacheFile -Force }
-    if (Test-Path $cmakeFilesDir) { Remove-Item -Recurse -Force $cmakeFilesDir }
-
-    & $CMAKE_CMD -S $cmakeSource -B $DEPS_BUILD -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS_INSTALL"
+    & $CMAKE_CMD -S $cmakeSource -B $DEPS_BUILD -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$DEPS_INSTALL
     if ($LASTEXITCODE -eq 0) {
         $configured = $true
         $usedNinjaFallback = $true
