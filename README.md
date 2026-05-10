@@ -109,54 +109,39 @@ cd ainoiceguard
 npm install
 ```
 
-### 3. Build the native addon (host OS)
+### 3. Build and package (one command per OS)
 
-This step fetches PortAudio and RNNoise via CMake, compiles them as static libs, then compiles the `.node` addon with node-gyp.
+These scripts handle everything: build native deps → compile `.node` → rebuild for Electron ABI → package installer.
 
-**Windows**
+**Windows** (produces `dist/win/Ainoiceguard Setup *.exe`)
 ```powershell
+npm run dist:full
+```
+
+**Linux** (produces `dist/linux/*.AppImage`, `*.deb`, `*.tar.gz`)
+```bash
+npm run dist:full:unix
+```
+
+**macOS** (produces `dist/mac/*.dmg`, `*.zip`)
+```bash
+npm run dist:full:mac
+```
+
+If you only want to build the native addon (without packaging):
+
+```powershell
+# Windows
 npm run build:native
-```
+npm run rebuild:electron   # ← always run this after build:native
 
-**Linux / macOS**
-```bash
+# Linux / macOS
 npm run build:native:unix
-```
-
-### 4. Rebuild for Electron ABI (required after native build)
-
-```bash
 npm run rebuild:electron
 ```
 
-### 5. Build distributables by OS (separate output folders)
-
-```bash
-# Windows -> dist/win
-npm run dist:win
-
-# Linux -> dist/linux
-npm run dist:linux
-
-# macOS -> dist/mac
-npm run dist:mac
-
-# Host-aware wrapper (runs only compatible target on your current OS)
-npm run dist:all
-```
-
-Convenience scripts:
-
-```bash
-# Build native + package for Windows
-npm run dist:full
-
-# Build native + package for Linux
-npm run dist:full:unix
-
-# Build native + package for macOS
-npm run dist:full:mac
-```
+> **Important:** Always run `npm run rebuild:electron` after building the native addon.
+> Skipping it causes a "NODE_MODULE_VERSION mismatch" error when Electron tries to load the addon.
 
 Output folders are separated per OS under `dist/win`, `dist/linux`, and `dist/mac`.
 Default `npm run dist` now calls the host-aware wrapper (`dist:all`).

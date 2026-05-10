@@ -10,7 +10,7 @@
     "build:native:unix": "bash ./scripts/build-native-linux.sh",
     "rebuild:electron": "electron-rebuild -f -w ainoiceguard",
     "dist": "npm run dist:all",
-    "dist:win": "electron-builder --win --x64 --publish never --config.directories.output=dist/win",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File ./scripts/dist-win.ps1",
     "dist:linux": "electron-builder --linux AppImage deb tar.gz --x64 --publish never --config.directories.output=dist/linux",
     "dist:mac": "electron-builder --mac dmg zip --x64 --arm64 --publish never --config.directories.output=dist/mac",
     "dist:all": "node ./scripts/dist-all.js",
@@ -19,7 +19,10 @@
     "dist:full:mac": "npm run build:native:unix && npm run rebuild:electron && npm run dist:mac",
     "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
     "test:ci": "npm run test",
-    "check:package": "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')\""
+    "check:package": "node -e \"JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')\"",
+    "verify:dist:win": "node scripts/verify-dist.js dist/win",
+    "verify:dist:linux": "node scripts/verify-dist.js dist/linux",
+    "verify:dist:mac": "node scripts/verify-dist.js dist/mac"
   },
   "keywords": [
     "noise-cancellation",
@@ -36,7 +39,7 @@
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",
     "electron": "^33.0.0",
-    "electron-builder": "^26.7.0",
+    "electron-builder": "^26.8.1",
     "node-gyp": "^12.1.0"
   },
   "engines": {
@@ -45,6 +48,7 @@
   "build": {
     "appId": "com.ainoiceguard.app",
     "productName": "Ainoiceguard",
+    "npmRebuild": false,
     "directories": {
       "output": "dist"
     },

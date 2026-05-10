@@ -29,10 +29,10 @@
               "VCCLCompilerTool": {
                 "ExceptionHandling": 1,
                 "AdditionalOptions": ["/std:c++17"],
-                "RuntimeLibrary": 2
+                "RuntimeLibrary": 0
               },
               "VCLinkerTool": {
-                "AdditionalOptions": ["/NODEFAULTLIB:LIBCMT"]
+                "AdditionalOptions": ["/NODEFAULTLIB:MSVCRT"]
               }
             },
             "defines": ["_WIN32", "PA_USE_WASAPI=1"]

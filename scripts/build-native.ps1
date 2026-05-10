@@ -23,11 +23,17 @@ if (Get-Command cmake -ErrorAction SilentlyContinue) {
     $CMAKE_CMD = "cmake"
 } else {
     $cmakeCandidates = @(
+        # VS 2026 (version 18)
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\18\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+        "${env:ProgramFiles}\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+        # VS 2022 (version 17)
         "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
         "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+        # Standalone CMake
         "${env:ProgramFiles}\CMake\bin\cmake.exe"
     )
     foreach ($c in $cmakeCandidates) {
@@ -157,8 +163,22 @@ if (Test-Path $nodeFile) {
 }
 
 Write-Host "[3/3] Done!" -ForegroundColor Green
+
+# ── Smoke test: verify the addon actually loads ──────────────────────────────
+Write-Host ""
+Write-Host "[4/4] Smoke-testing native addon load..." -ForegroundColor Yellow
+$addonPath = Join-Path $buildDir "ainoiceguard.node"
+$smokeResult = node -e "try { require('$($addonPath -replace '\\','/')'); process.exit(0); } catch(e) { console.error(e.message); process.exit(1); }" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  Addon failed to load: $smokeResult" -ForegroundColor Red
+    Write-Host "  Run 'npm run rebuild:electron' if building for Electron (different ABI from Node)." -ForegroundColor Yellow
+} else {
+    Write-Host "  Addon loads OK under system Node." -ForegroundColor Green
+}
+Write-Host "[4/4] Done!" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Build complete!" -ForegroundColor Cyan
-Write-Host "  Run 'npm start' to launch Ainoiceguard." -ForegroundColor Cyan
+Write-Host "  Run 'npm run dist:full' to build the installer." -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan

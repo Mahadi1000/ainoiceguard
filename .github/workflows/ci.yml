@@ -14,14 +14,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20.18.0'
           cache: npm
       - name: Force HTTPS for GitHub git dependencies
         run: |
@@ -34,14 +31,11 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20.18.0'
           cache: npm
       - name: Force HTTPS for GitHub git dependencies
         run: |
@@ -49,27 +43,34 @@ jobs:
           git config --global --add url."https://github.com/".insteadOf "git@github.com:"
       - run: npm ci
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libasound2-dev pkg-config
+      - name: Cache native deps
+        uses: actions/cache@v4
+        with:
+          path: deps/install
+          key: linux-deps-${{ hashFiles('native/CMakeLists.txt') }}
       - name: Build native addon
         run: npm run build:native:unix
+      - name: Rebuild native addon for Electron ABI
+        run: npm run rebuild:electron
       - name: Build Linux distributables
         run: npm run dist:linux
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ainoiceguard-linux
-          path: dist/linux/**
+          path: |
+            dist/linux/*.AppImage
+            dist/linux/*.deb
+            dist/linux/*.tar.gz
 
   build-macos:
     runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20.18.0'
           cache: npm
       - name: Force HTTPS for GitHub git dependencies
         run: |
@@ -78,41 +79,59 @@ jobs:
       - run: npm ci
       - name: Install cmake
         run: brew install cmake
+      - name: Cache native deps
+        uses: actions/cache@v4
+        with:
+          path: deps/install
+          key: macos-deps-${{ hashFiles('native/CMakeLists.txt') }}
       - name: Build native addon
         run: npm run build:native:unix
+      - name: Rebuild native addon for Electron ABI
+        run: npm run rebuild:electron
       - name: Build macOS distributables
         run: npm run dist:mac
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ainoiceguard-macos
-          path: dist/mac/**
+          path: |
+            dist/mac/*.dmg
+            dist/mac/*.zip
 
   build-windows:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20.18.0'
           cache: npm
       - name: Force HTTPS for GitHub git dependencies
         run: |
           git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global --add url."https://github.com/".insteadOf "git@github.com:"
       - run: npm ci
+      - name: Cache native deps
+        uses: actions/cache@v4
+        with:
+          path: deps/install
+          key: windows-deps-${{ hashFiles('native/CMakeLists.txt') }}
       - name: Build native addon
         run: npm run build:native
+      - name: Rebuild native addon for Electron ABI
+        run: npm run rebuild:electron
       - name: Build Windows distributables
-        run: npm run dist:win
+        run: npx electron-builder --win --x64 --publish never --config.directories.output=dist/win --config.npmRebuild=false
+      - name: Verify installer contents
+        run: node scripts/verify-dist.js dist/win
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ainoiceguard-windows
-          path: dist/win/**
+          path: |
+            dist/win/*.exe
+            dist/win/*.exe.blockmap
+            dist/win/latest.yml
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -127,4 +146,12 @@ jobs:
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: release-artifacts/**/*
+          files: |
+            release-artifacts/ainoiceguard-windows/*.exe
+            release-artifacts/ainoiceguard-windows/*.exe.blockmap
+            release-artifacts/ainoiceguard-windows/latest.yml
+            release-artifacts/ainoiceguard-linux/*.AppImage
+            release-artifacts/ainoiceguard-linux/*.deb
+            release-artifacts/ainoiceguard-linux/*.tar.gz
+            release-artifacts/ainoiceguard-macos/*.dmg
+            release-artifacts/ainoiceguard-macos/*.zip

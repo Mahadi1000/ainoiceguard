@@ -24,6 +24,12 @@ if(NOT CMAKE_INSTALL_PREFIX OR CMAKE_INSTALL_PREFIX STREQUAL "")
   set(CMAKE_INSTALL_PREFIX "${PROJECT_ROOT}/deps/install" CACHE PATH "Install prefix" FORCE)
 endif()
 
+# On Windows, build all static libs with static CRT (/MT) to match the addon.
+# This eliminates the VC++ Redistributable runtime dependency.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+endif()
+
 include(FetchContent)
 
 # ── PortAudio ────────────────────────────────────────────────────────────────
