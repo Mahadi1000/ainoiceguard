@@ -94,7 +94,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Ainoiceguard",
-      "uninstallDisplayName": "Ainoiceguard"
+      "uninstallDisplayName": "Ainoiceguard",
+      "include": "build/installer/installer.nsh"
     }
   }
 }

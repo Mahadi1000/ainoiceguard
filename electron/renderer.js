@@ -35,6 +35,7 @@ const setupGuide = document.getElementById("setupGuide");
 const vbCableFound = document.getElementById("vbCableFound");
 const vbCableMissing = document.getElementById("vbCableMissing");
 const vbCableLink = document.getElementById("vbCableLink");
+const vbCableRefresh = document.getElementById("vbCableRefresh");
 
 /* ── State ───────────────────────────────────────────────────────────────── */
 
@@ -275,7 +276,7 @@ function startMetricsPolling() {
           noInputPollCount++;
           if (noInputPollCount >= 20) {
             meterHint.textContent =
-              "No input signal \u2014 check microphone and device selection.";
+              "No input signal \u2014 check microphone selection.";
             meterHint.classList.remove("hidden");
           } else if (outputIsMute) {
             meterHint.textContent =
@@ -286,7 +287,7 @@ function startMetricsPolling() {
           noInputPollCount = 0;
           if (outputIsMute) {
             meterHint.textContent =
-              "Output is muted. Select Speakers or CABLE to hear audio.";
+              "Output is muted. For other apps (Discord/Zoom), set their mic to CABLE Input.";
             meterHint.classList.remove("hidden");
           } else {
             meterHint.textContent = "";
@@ -376,17 +377,31 @@ function detectVBCable(outputDevices) {
   if (cableDevice) {
     outputSelect.value = String(cableDevice.index);
     if (vbCableFound) vbCableFound.classList.remove("hidden");
+    if (vbCableMissing) vbCableMissing.classList.add("hidden");
   } else {
     if (vbCableMissing) vbCableMissing.classList.remove("hidden");
   }
 }
 
+/* Open VB-Audio download page. */
 if (vbCableLink) {
   vbCableLink.addEventListener("click", (e) => {
     e.preventDefault();
     if (bridge && bridge.openExternal) {
       bridge.openExternal("https://vb-audio.com/Cable/");
     }
+  });
+}
+
+/* Re-check for VB-Cable after user reports having installed it.
+   This also handles the post-install reboot scenario. */
+if (vbCableRefresh) {
+  vbCableRefresh.addEventListener("click", async (e) => {
+    e.preventDefault();
+    /* Force a device re-enumeration by calling loadDevices().
+       PortAudio re-scans hardware on each call, so newly installed
+       devices will appear without a full app restart. */
+    await loadDevices();
   });
 }
 
