@@ -8,6 +8,13 @@ native/build/
 # Fetched & compiled C dependencies
 deps/
 
+# Benchmark: generated/downloaded audio and run outputs (manifests are tracked)
+bench/fixtures/synth/*.wav
+bench/fixtures/voicebank/clean/
+bench/fixtures/voicebank/noisy/
+bench/results/
+__pycache__/
+
 # OS files
 Thumbs.db
 .DS_Store
@@ -27,3 +34,4 @@ npm-debug.log*
 # Electron
 dist/
 out/
+build/installer/vendor/

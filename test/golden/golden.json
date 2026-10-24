@@ -1,0 +1,27 @@
+{
+  "tolerance_rms": 0.0001,
+  "format": "s16",
+  "rnnoise_commit": "a9afcccb3c4f01e6e76a1ef67ccb58b7799856bf",
+  "cases": [
+    {
+      "input": "voice_pink_snr5_3s.wav",
+      "backend": "rnnoise-raw",
+      "expected": "voice_pink_snr5_3s.rnnoise-raw.expected.wav"
+    },
+    {
+      "input": "voice_pink_snr5_3s.wav",
+      "backend": "rnnoise-chain",
+      "expected": "voice_pink_snr5_3s.rnnoise-chain.expected.wav"
+    },
+    {
+      "input": "noise_fan_2s.wav",
+      "backend": "rnnoise-raw",
+      "expected": "noise_fan_2s.rnnoise-raw.expected.wav"
+    },
+    {
+      "input": "noise_fan_2s.wav",
+      "backend": "rnnoise-chain",
+      "expected": "noise_fan_2s.rnnoise-chain.expected.wav"
+    }
+  ]
+}
