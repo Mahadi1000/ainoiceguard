@@ -1,0 +1,18 @@
+diff --git a/libDF/src/capi.rs b/libDF/src/capi.rs
+index 6b79fd1..7b65c89 100644
+--- a/libDF/src/capi.rs
++++ b/libDF/src/capi.rs
+@@ -10,7 +10,12 @@ pub struct DFState(crate::tract::DfTract);
+ 
+ impl DFState {
+     fn new(model_path: &str, channels: usize, atten_lim: f32) -> Self {
+-        let r_params = RuntimeParams::default_with_ch(channels).with_atten_lim(atten_lim);
++        // Ainoiceguard patch: use the deep-filter CLI's default stage thresholds
++        // (-15/35/35, also what later upstream df_create() uses) instead of
++        // default_with_ch()'s -10/30/20, which degrade speech (see docs/phase1b-results.md).
++        let r_params = RuntimeParams::default_with_ch(channels)
++            .with_atten_lim(atten_lim)
++            .with_thresholds(-15., 35., 35.);
+         let df_params =
+             DfParams::new(PathBuf::from(model_path)).expect("Could not load model from path");
+         let m =

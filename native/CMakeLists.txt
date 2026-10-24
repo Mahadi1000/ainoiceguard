@@ -141,4 +141,25 @@ if(NG_BUILD_BENCH)
   if(NOT MSVC)
     target_link_libraries(ng_bench PRIVATE m)
   endif()
+
+  # ── DeepFilterNet backend (optional, Phase 1B) ──────────────────────────
+  # Links the official libDF C API built as a static library from tag v0.5.6:
+  #   cargo rustc -p deep_filter --release --lib --features capi \
+  #     --target <triple> --crate-type staticlib -- --print native-static-libs
+  # (Windows: also RUSTFLAGS="-C target-feature=+crt-static" to match /MT.)
+  option(NG_WITH_DFN "Add the DeepFilterNet (libDF C API) backend to ng_bench" OFF)
+  set(NG_DFN_LIB "" CACHE FILEPATH "Path to libDF static library (df.lib / libdf.a)")
+  set(NG_DFN_SYSLIBS "" CACHE STRING
+      "System libraries libDF needs (from cargo --print native-static-libs)")
+  if(NG_WITH_DFN)
+    if(NOT EXISTS "${NG_DFN_LIB}")
+      message(FATAL_ERROR "NG_WITH_DFN=ON needs NG_DFN_LIB pointing to the libDF static library")
+    endif()
+    target_compile_definitions(ng_bench PRIVATE NG_WITH_DFN NG_DFN_VERSION="0.5.6")
+    target_link_libraries(ng_bench PRIVATE "${NG_DFN_LIB}")
+    if(NG_DFN_SYSLIBS)
+      separate_arguments(_ng_dfn_syslibs NATIVE_COMMAND "${NG_DFN_SYSLIBS}")
+      target_link_libraries(ng_bench PRIVATE ${_ng_dfn_syslibs})
+    endif()
+  endif()
 endif()

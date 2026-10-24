@@ -2,7 +2,7 @@
 # Versions are the ones the Phase 0 baseline was produced with.
 numpy==2.2.6
 scipy==1.16.2
+pystoi==0.4.1            # STOI (MIT)
 
-# Optional metrics -- install to enable them in score.py:
-# pystoi==0.4.1          # STOI (MIT)
-# onnxruntime==1.23.0    # DNSMOS P.835 (also needs sig_bak_ovr.onnx from microsoft/DNS-Challenge)
+# Optional -- needed only with score.py --dnsmos-model:
+# onnxruntime==1.23.0    # DNSMOS P.835 (sig_bak_ovr.onnx from microsoft/DNS-Challenge, CC BY 4.0)

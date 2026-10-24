@@ -14,11 +14,24 @@ WAV fixtures. Nothing here is shipped with the app. See
 | `bench/fetch_voicebank.py` | Extracts a fixed 50-file real-speech subset from VoiceBank+DEMAND zips you download |
 | `bench/run_bench.py` | Runs every fixture through every backend, then scores |
 | `bench/score.py` | Delay, SI-SDR, STOI, DNSMOS, attenuation, clipping, timing summary |
+| `bench/compare.py` | Paired per-file differences vs a baseline backend, with bootstrap CIs |
 | `bench/make_golden.py` | Regenerates `test/golden/` (only when an output change is intended) |
 | `test/golden.test.js` | Golden regression test (skipped if `ng_bench` is not built) |
 
 Backends: `rnnoise-raw` (model only) and `rnnoise-chain` (the full
 `RNNoiseWrapper` the app runs: HPF, blend, makeup gain, VAD gate, comfort noise).
+With `--dfn-cli PATH` (the official DeepFilterNet `deep-filter` binary),
+`run_bench.py` also accepts `dfn-cli`, `dfn-cli-pf`, `dfn-cli-a18`,
+`dfn-cli-a12`, `dfn-cli-a6` and `dfn-cli-a12-pf`. These have wall-clock/self-reported
+RTF only (no per-frame timing). DFN skips near-silent frames, so compare its
+speed on speech fixtures only.
+
+**DeepFilterNet C API (`dfn`):** build with `scripts/build-libdf.ps1`
+(libDF v0.5.6 plus two patches in `native/bench/`), then pass
+`--bench deps/bench-build-dfn/Release/ng_bench.exe --dfn-model <DeepFilterNet3_onnx.tar.gz>`.
+This gives per-frame timing like the RNNoise backends. Use `--priority high`
+for timing: at normal priority, OS pre-emption dominates the tails
+(see docs/phase1b-results.md).
 
 ## Quick start (Windows)
 
