@@ -1,0 +1,152 @@
+{
+  "sample_rate": 48000,
+  "seed": 20261024,
+  "numpy": "2.2.6",
+  "files": {
+    "voice_synth_clean.wav": {
+      "kind": "clean",
+      "note": "synthetic voice, not real speech",
+      "sha256": "b4fe4c1223be2b66d216355206b7b95ec98e916ce3901bfa6473373f59659626"
+    },
+    "voice_synth_pink_snr-5.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "pink",
+      "snr_db": -5,
+      "sha256": "53a626bf0af8f05be3caeef8026cccf3362f86dfe2ba391e479a21797a678e13"
+    },
+    "voice_synth_pink_snr+0.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "pink",
+      "snr_db": 0,
+      "sha256": "e220f8b9e48f19b0ae6ce21e9413e1df55e17d219261c72f5c07546279293fe4"
+    },
+    "voice_synth_pink_snr+5.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "pink",
+      "snr_db": 5,
+      "sha256": "9316d65ce38241be4213c8f8fdbc9fda9979b1361cdf69b5254577e187c8ab81"
+    },
+    "voice_synth_pink_snr+10.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "pink",
+      "snr_db": 10,
+      "sha256": "8abdddc1c08a8dbe805919c543b2c42e46b66371af1ba492c5c86a0fee24ee7e"
+    },
+    "voice_synth_pink_snr+20.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "pink",
+      "snr_db": 20,
+      "sha256": "63856df4736f1b2db43126c52102a0b850b6ea2d3ef84047f2131af3c02f709d"
+    },
+    "noise_only_pink.wav": {
+      "kind": "noise_only",
+      "noise": "pink",
+      "sha256": "d8422c06448f687d03b6867dc1daf669477db66294a90a1bfaaebf08e32da0ab"
+    },
+    "voice_synth_fan_snr-5.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "fan",
+      "snr_db": -5,
+      "sha256": "99d8d67b2fc5773ff472271cd51d8c25a02fbdd390e2a97cdd0e99788c3ce5cc"
+    },
+    "voice_synth_fan_snr+0.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "fan",
+      "snr_db": 0,
+      "sha256": "ceeb16f692f1d4dfd6d3165333604b2b6c0eb7782db6af06ea0a6f781fe8e403"
+    },
+    "voice_synth_fan_snr+5.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "fan",
+      "snr_db": 5,
+      "sha256": "60353cfda8b5283f108caa0b53ba90fc7e2fc25ca8664f5e8a96360060977e44"
+    },
+    "voice_synth_fan_snr+10.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "fan",
+      "snr_db": 10,
+      "sha256": "9de54253e7d584446ccd1a94fb34c9454ed27a22000ad82b95dd3b22160cf276"
+    },
+    "voice_synth_fan_snr+20.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "fan",
+      "snr_db": 20,
+      "sha256": "3c7fb69122202f80acd8c1a47864c33411473aa211f91fbefcbbd2b5a1de7729"
+    },
+    "noise_only_fan.wav": {
+      "kind": "noise_only",
+      "noise": "fan",
+      "sha256": "21627073e1cf0d4311f41a2b477c1d72e74eedff69f3ec48873bea47092b88ef"
+    },
+    "voice_synth_hum_snr-5.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "hum",
+      "snr_db": -5,
+      "sha256": "06d450f572f4cb75013ad3d20bd64dda6e5f16cc0d5c85f7e3beb1d9a8d804c5"
+    },
+    "voice_synth_hum_snr+0.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "hum",
+      "snr_db": 0,
+      "sha256": "07f46d16aebef6be8dc69d295b59ac67f56618b613d7602a8650c2283dd6bf63"
+    },
+    "voice_synth_hum_snr+5.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "hum",
+      "snr_db": 5,
+      "sha256": "84cf4a35c2f862345de9b3399531dd6adf2324844f924e25fa35decc8173bb4e"
+    },
+    "voice_synth_hum_snr+10.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "hum",
+      "snr_db": 10,
+      "sha256": "d37f83ccafeeaf996827dce6f76b67002aa88ec1572fb0831139090ceeeb89d5"
+    },
+    "voice_synth_hum_snr+20.wav": {
+      "kind": "mixture",
+      "clean": "voice_synth_clean.wav",
+      "noise": "hum",
+      "snr_db": 20,
+      "sha256": "bc5712ad246d0f58b42102285b71a93c21783814c1fe9a056e574e2d3334f6c5"
+    },
+    "noise_only_hum.wav": {
+      "kind": "noise_only",
+      "noise": "hum",
+      "sha256": "01bd0897d762125e8848347d8053486f8e59d4395cb037a08950be1ba3fcd088"
+    },
+    "silence_digital.wav": {
+      "kind": "silence",
+      "sha256": "27cb785df0cedf3e8136cf6893ae9a93a7220efc0420bd3e03dfc1c367f29638"
+    },
+    "silence_floor_-70dBFS.wav": {
+      "kind": "silence",
+      "note": "white floor at -70 dBFS RMS",
+      "sha256": "cb0f0ca80790ec6104cc34a42be6779d93957eb2417c3b943f236efb1a306a62"
+    },
+    "impulse_train.wav": {
+      "kind": "impulse",
+      "interval_s": 1.0,
+      "count": 5,
+      "sha256": "1d6e95c29fe22ce676fab66d7b43c827e3b0fd606757506e068728b15910fc36"
+    },
+    "near_clip_voice_pink.wav": {
+      "kind": "near_clip",
+      "clean": "voice_synth_clean.wav",
+      "sha256": "2235db172745122e740dae73c98f75c59db46d5e0cff1941743e5322004963e2"
+    }
+  }
+}

@@ -60,7 +60,8 @@ FetchContent_MakeAvailable(portaudio)
 FetchContent_Declare(
   rnnoise
   GIT_REPOSITORY https://github.com/mumble-voip/rnnoise.git
-  GIT_TAG        master
+  # Pinned for reproducible benchmark baselines (was: master).
+  GIT_TAG        a9afcccb3c4f01e6e76a1ef67ccb58b7799856bf
 )
 FetchContent_GetProperties(rnnoise)
 if(NOT rnnoise_POPULATED)
@@ -118,4 +119,26 @@ if(WIN32)
     DESTINATION include
     OPTIONAL
   )
+endif()
+
+# ── Offline benchmark (optional, dev-only) ───────────────────────────────────
+# Builds ng_bench, which runs the exact RNNoiseWrapper used by the addon over
+# WAV files. Off by default so app builds are unaffected.
+#   cmake -S native -B deps/bench-build -DNG_BUILD_BENCH=ON
+#   cmake --build deps/bench-build --config Release --target ng_bench
+option(NG_BUILD_BENCH "Build the offline ng_bench tool" OFF)
+if(NG_BUILD_BENCH)
+  add_executable(ng_bench
+    bench/ng_bench.cpp
+    src/rnnoise_wrapper.cpp
+  )
+  target_include_directories(ng_bench PRIVATE src bench)
+  target_link_libraries(ng_bench PRIVATE rnnoise)
+  target_compile_features(ng_bench PRIVATE cxx_std_17)
+  target_compile_definitions(ng_bench PRIVATE
+    NG_RNNOISE_COMMIT="a9afcccb3c4f01e6e76a1ef67ccb58b7799856bf"
+  )
+  if(NOT MSVC)
+    target_link_libraries(ng_bench PRIVATE m)
+  endif()
 endif()

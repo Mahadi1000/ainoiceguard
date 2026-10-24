@@ -29,6 +29,29 @@ jobs:
       - run: npm run test:ci
       - run: bash -n ./scripts/build-native-linux.sh
 
+  bench-golden:
+    # Builds the offline ng_bench tool and checks RNNoise output against the
+    # stored golden files in test/golden/ (regression guard for the baseline).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.18.0'
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libasound2-dev
+      - name: Build ng_bench
+        run: |
+          cmake -S native -B deps/bench-build -DCMAKE_BUILD_TYPE=Release -DNG_BUILD_BENCH=ON
+          cmake --build deps/bench-build --target ng_bench --parallel
+      - name: Golden regression test
+        env:
+          NG_BENCH_REQUIRED: '1'
+          NG_BENCH_BIN: deps/bench-build/ng_bench
+        run: node --test --test-reporter=spec test/golden.test.js
+
   build-linux:
     runs-on: ubuntu-latest
     steps:
