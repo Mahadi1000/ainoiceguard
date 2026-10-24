@@ -200,6 +200,11 @@ def mean(vals):
     return float(np.mean(vals)) if vals else None
 
 
+def maxn(vals):
+    vals = [v for v in vals if v is not None]
+    return max(vals) if vals else None
+
+
 def fmt(v, nd=2):
     return "—" if v is None else f"{v:.{nd}f}"
 
@@ -230,11 +235,14 @@ def summarize(entries):
             "silence_out_rms_dbfs": s("out_rms_dbfs", [e for e in es if e["kind"] == "silence"]),
             "clipped_samples": int(sum(e["metrics"]["clipped_samples"] for e in es)),
             "non_finite": int(sum(e["metrics"]["non_finite"] for e in es)),
+            # Per-frame timing is absent for wall-clock-only backends (dfn-cli*).
             "frame_us_mean": mean([e["timing_us"]["mean"] for e in es]),
-            "frame_us_p99_max": max(e["timing_us"]["p99"] for e in es),
-            "frame_us_max": max(e["timing_us"]["max"] for e in es),
+            "frame_us_p99_max": maxn([e["timing_us"]["p99"] for e in es]),
+            "frame_us_max": maxn([e["timing_us"]["max"] for e in es]),
             "rtf_mean": mean([e["real_time_factor"] for e in es]),
-            "overruns": int(sum(e["timing_us"]["overruns_over_10ms"] for e in es)),
+            "overruns": maxn([sum(e["timing_us"]["overruns_over_10ms"] for e in es)]
+                             if all(e["timing_us"]["overruns_over_10ms"] is not None for e in es)
+                             else []),
         })
     return rows
 
@@ -258,7 +266,7 @@ def write_summary(rows, path, meta):
             f"| {fmt(r['stoi_out_snr_le10'], 3)} | {fmt(r['stoi_delta_snr_le10'], 3)} | {fmt(r['dnsmos_ovrl_out'])} "
             f"| {fmt(r['speech_level_db'])} | {fmt(r['noise_attenuation_db'], 1)} | {fmt(r['silence_out_rms_dbfs'], 1)} "
             f"| {r['clipped_samples']} | {r['non_finite']} | {fmt(r['frame_us_mean'], 0)} | {fmt(r['frame_us_p99_max'], 0)} "
-            f"| {fmt(r['frame_us_max'], 0)} | {fmt(r['rtf_mean'], 4)} | {r['overruns']} |")
+            f"| {fmt(r['frame_us_max'], 0)} | {fmt(r['rtf_mean'], 4)} | {fmt(r['overruns'], 0)} |")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
