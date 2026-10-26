@@ -12,6 +12,7 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { createTray, destroyTray, updateTrayMenu } = require("./tray");
+const { summarizeSession, formatSessionLine } = require("./session-stats");
 
 /* ── Load native addon ─────────────────────────────────────────────────────── */
 let addon;
@@ -46,6 +47,51 @@ try {
 
 /* ── State ─────────────────────────────────────────────────────────────────── */
 let mainWindow = null;
+let sessionStartedAt = null;
+
+/* ── Engine session stats ──────────────────────────────────────────────────── */
+
+/** CPU usage (%) of this (main) process, where the native addon runs. */
+function mainProcessCpuPercent() {
+  try {
+    const m = app.getAppMetrics().find((p) => p.pid === process.pid);
+    return m ? m.cpu.percentCPUUsage : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stop the engine and append one summary line per session to
+ * <logs>/engine-sessions.jsonl. Counters are read before stop() resets them.
+ */
+function stopEngineAndLog(reason) {
+  if (!addon.isRunning()) return;
+  let engine = null;
+  try {
+    engine = addon.getMetrics().engine;
+  } catch {
+    /* metrics are best-effort; never block stopping */
+  }
+  addon.stop();
+  if (!engine) return;
+  try {
+    const summary = summarizeSession(engine, {
+      startedAt: sessionStartedAt,
+      endedAt: new Date(),
+      reason,
+      cpuPercent: mainProcessCpuPercent(),
+    });
+    console.log(formatSessionLine(summary));
+    const dir = app.getPath("logs");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, "engine-sessions.jsonl"), JSON.stringify(summary) + "\n");
+  } catch (err) {
+    console.error("Could not write engine session stats:", err.message);
+  } finally {
+    sessionStartedAt = null;
+  }
+}
 
 /* ── App Lifecycle ─────────────────────────────────────────────────────────── */
 
@@ -64,9 +110,7 @@ app.on("before-quit", () => {
   app.isQuitting = true;
   console.log("Shutting down audio engine...");
   try {
-    if (addon.isRunning()) {
-      addon.stop();
-    }
+    stopEngineAndLog("quit");
   } catch (err) {
     console.error("Error stopping audio engine:", err.message);
   }
@@ -144,6 +188,7 @@ ipcMain.handle("audio:start", (_event, inputIdx, outputIdx) => {
       updateTrayMenu(false);
       return { success: false, error: errMsg };
     }
+    sessionStartedAt = new Date();
     updateTrayMenu(true);
     return { success: true };
   } catch (err) {
@@ -156,7 +201,7 @@ ipcMain.handle("audio:start", (_event, inputIdx, outputIdx) => {
  */
 ipcMain.handle("audio:stop", () => {
   try {
-    addon.stop();
+    stopEngineAndLog("stop");
     updateTrayMenu(false);
     return { success: true };
   } catch (err) {
@@ -192,12 +237,16 @@ ipcMain.handle("audio:get-status", () => {
 });
 
 /**
- * audio:get-metrics -> { inputRms, outputRms, vadProbability, gateGain, framesProcessed }
+ * audio:get-metrics -> { inputRms, outputRms, vadProbability, gateGain, framesProcessed,
+ *                        noiseFloor, engine: {...}, process: { cpuPercent } }
  * Polled from the renderer at ~100ms intervals for the level meter and logs.
+ * `engine` = native health counters (xruns, drops, timing, latency estimate).
  */
 ipcMain.handle("audio:get-metrics", () => {
   try {
-    return addon.getMetrics();
+    const m = addon.getMetrics();
+    m.process = { cpuPercent: mainProcessCpuPercent() };
+    return m;
   } catch (err) {
     return {
       inputRms: 0,

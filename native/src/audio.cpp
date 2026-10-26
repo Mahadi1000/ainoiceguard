@@ -36,6 +36,22 @@ static constexpr size_t kRingCapacity = 4096;
 /* Max restart attempts before giving up. */
 static constexpr int kMaxRestartAttempts = 5;
 
+/*
+ * Device-loss watchdog: checked every 250 ms from the processing thread.
+ * A capture stream whose callback has not run for 1 s is treated as lost
+ * (WASAPI/MME may stop calling back without reporting an error).
+ * After a failed restart the watchdog fires again, so recovery keeps being
+ * retried (e.g. until a USB headset is plugged back in).
+ */
+static constexpr int64_t kWatchdogIntervalMs = 250;
+static constexpr int64_t kCaptureStallMs = 1000;
+
+static int64_t steadyMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
 /* ───────────────────── Constructor / Destructor ───────────────────── */
 
 AudioEngine::AudioEngine() = default;
@@ -76,6 +92,10 @@ std::string AudioEngine::start(const AudioConfig& config) {
   }
 
   config_ = config;
+
+  /* Fresh counters for this session (no audio thread is running yet). */
+  stats_.reset();
+  outputPrimed_.store(false, std::memory_order_relaxed);
 
   /* Initialize PortAudio. */
   PaError err = Pa_Initialize();
@@ -259,8 +279,12 @@ std::string AudioEngine::openStreams() {
     }
   }
 
+  /* WASAPI info still attached => the exclusive-mode open succeeded. */
+  const bool inputExclusive = inputParams.hostApiSpecificStreamInfo != nullptr;
+
   if (!outputEnabled) {
     outputStream_ = nullptr;
+    captureStreamSnapshot(inputIdx, -1, inputExclusive, false);
     return ""; /* Success: capture-only (mute output) */
   }
 
@@ -286,7 +310,44 @@ std::string AudioEngine::openStreams() {
     }
   }
 
+  captureStreamSnapshot(inputIdx, outputIdx, inputExclusive,
+                        outputParams.hostApiSpecificStreamInfo != nullptr);
   return "";  /* Success */
+}
+
+void AudioEngine::captureStreamSnapshot(int inputIdx, int outputIdx, bool inExcl,
+                                        bool outExcl) {
+  snapInputDevice_.store(inputIdx, std::memory_order_relaxed);
+  snapOutputDevice_.store(outputIdx, std::memory_order_relaxed);
+  snapInputExclusive_.store(inExcl, std::memory_order_relaxed);
+  snapOutputExclusive_.store(outExcl, std::memory_order_relaxed);
+
+  const PaStreamInfo* in = captureStream_ ? Pa_GetStreamInfo(captureStream_) : nullptr;
+  const PaStreamInfo* out = outputStream_ ? Pa_GetStreamInfo(outputStream_) : nullptr;
+  snapInputLatencyMs_.store(in ? in->inputLatency * 1000.0 : 0.0, std::memory_order_relaxed);
+  snapOutputLatencyMs_.store(out ? out->outputLatency * 1000.0 : 0.0,
+                             std::memory_order_relaxed);
+}
+
+StreamSnapshot AudioEngine::streamSnapshot() const {
+  StreamSnapshot s;
+  s.inputDevice = snapInputDevice_.load(std::memory_order_relaxed);
+  s.outputDevice = snapOutputDevice_.load(std::memory_order_relaxed);
+  s.inputExclusive = snapInputExclusive_.load(std::memory_order_relaxed);
+  s.outputExclusive = snapOutputExclusive_.load(std::memory_order_relaxed);
+  s.sampleRate = config_.sampleRate;
+  s.inputLatencyMs = snapInputLatencyMs_.load(std::memory_order_relaxed);
+  s.outputLatencyMs = snapOutputLatencyMs_.load(std::memory_order_relaxed);
+  s.ringCapacity = captureRing_ ? captureRing_->capacity() : 0;
+  return s;
+}
+
+size_t AudioEngine::captureFill() const {
+  return captureRing_ ? captureRing_->available_read() : 0;
+}
+
+size_t AudioEngine::outputFill() const {
+  return outputRing_ ? outputRing_->available_read() : 0;
 }
 
 void AudioEngine::closeStreams() {
@@ -319,20 +380,24 @@ int AudioEngine::captureCallback(const void* input, void* /*output*/,
   }
 
   const auto* samples = static_cast<const float*>(input);
+  EngineStats& st = engine->stats_;
+  bump(st.captureCallbacks);
 
   /*
    * Write captured samples to ring buffer.
-   * If the ring buffer is full, samples are silently dropped.
-   * This is intentional: in real-time audio, dropping frames is
-   * better than blocking or introducing unbounded latency.
+   * If the ring buffer is full, samples are dropped -- in real-time audio,
+   * dropping is better than blocking. The drop is counted, not silent.
    */
-  engine->captureRing_->write(samples, frameCount);
+  const size_t written = engine->captureRing_->write(samples, frameCount);
+  if (written < frameCount) bump(st.captureDroppedSamples, frameCount - written);
 
-  /* Detect device issues via statusFlags. */
-  if (statusFlags & 0x00000001 /* paInputUnderflow */ ||
-      statusFlags & 0x00000002 /* paInputOverflow */) {
-    engine->shouldRestart_.store(true, std::memory_order_relaxed);
-  }
+  /*
+   * xruns are counted only. They are normal transient events (scheduling
+   * jitter); restarting the streams on them caused 0.1-3.1 s outages.
+   * Real device loss is detected by the watchdog in the processing thread.
+   */
+  if (statusFlags & paInputUnderflow) bump(st.inputUnderflows);
+  if (statusFlags & paInputOverflow) bump(st.inputOverflows);
 
   return paContinue;
 }
@@ -357,18 +422,25 @@ int AudioEngine::outputCallback(const void* /*input*/, void* output,
     return paContinue;
   }
 
+  EngineStats& st = engine->stats_;
+  bump(st.outputCallbacks);
+
   size_t read = engine->outputRing_->read(out, frameCount);
 
   /* Zero-fill remainder if underrun (not enough processed data yet). */
   if (read < frameCount) {
     memset(out + read, 0, (frameCount - read) * sizeof(float));
+    /* Before the first processed audio arrives this is just start-up priming. */
+    if (engine->outputPrimed_.load(std::memory_order_relaxed)) {
+      bump(st.outputUnderrunEvents);
+      bump(st.outputUnderrunSamples, frameCount - read);
+    }
   }
+  if (read > 0) engine->outputPrimed_.store(true, std::memory_order_relaxed);
 
-  /* Detect output issues. */
-  if (statusFlags & 0x00000004 /* paOutputUnderflow */ ||
-      statusFlags & 0x00000008 /* paOutputOverflow */) {
-    engine->shouldRestart_.store(true, std::memory_order_relaxed);
-  }
+  /* Counted only -- see captureCallback. */
+  if (statusFlags & paOutputUnderflow) bump(st.outputUnderflows);
+  if (statusFlags & paOutputOverflow) bump(st.outputOverflows);
 
   return paContinue;
 }
@@ -385,18 +457,30 @@ void AudioEngine::processingLoop() {
    */
   float frame[kRNNoiseFrameSize];
 
+  wdLastCaptureCallbacks_ = stats_.captureCallbacks.load(std::memory_order_relaxed);
+  wdLastProgressMs_ = wdLastCheckMs_ = steadyMs();
+
   while (running_.load(std::memory_order_acquire)) {
     /* Check if we have a full RNNoise frame available. */
     if (captureRing_->available_read() >= kRNNoiseFrameSize) {
       captureRing_->read(frame, kRNNoiseFrameSize);
 
-      /* Run noise suppression. */
+      /* Run noise suppression, timing the processing itself only. */
+      const auto t0 = std::chrono::steady_clock::now();
       rnnoise_.processFrame(frame);
+      const auto t1 = std::chrono::steady_clock::now();
+      stats_.recordFrameTime(uint32_t(
+          std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()));
 
       /* If output is disabled, discard processed audio (no monitoring). */
       if (outputStream_) {
-        outputRing_->write(frame, kRNNoiseFrameSize);
+        const size_t w = outputRing_->write(frame, kRNNoiseFrameSize);
+        if (w < kRNNoiseFrameSize) bump(stats_.outputDroppedSamples, kRNNoiseFrameSize - w);
       }
+
+      /* Ring fill after this frame (latency + drift indicator). */
+      stats_.recordFill(uint32_t(captureRing_->available_read()),
+                        uint32_t(outputRing_->available_read()), outputStream_ != nullptr);
     } else {
       /*
        * Not enough data yet. Sleep briefly to avoid spinning at 100% CPU.
@@ -407,12 +491,42 @@ void AudioEngine::processingLoop() {
       std::this_thread::sleep_for(std::chrono::microseconds(500));
     }
 
-    /* Handle device disconnect / restart. */
-    if (shouldRestart_.load(std::memory_order_relaxed)) {
-      shouldRestart_.store(false, std::memory_order_relaxed);
+    /* Handle real device loss (not xruns -- those are only counted). */
+    if (deviceLost()) {
       attemptRestart();
     }
   }
+}
+
+/* ───────────────────── Device-Loss Watchdog ───────────────────── */
+
+bool AudioEngine::deviceLost() {
+  const int64_t now = steadyMs();
+  if (now - wdLastCheckMs_ < kWatchdogIntervalMs) return false;
+  wdLastCheckMs_ = now;
+
+  bool lost = false;
+  /* A stream PortAudio stopped on its own (host error, device invalidated). */
+  if (!captureStream_ || Pa_IsStreamActive(captureStream_) != 1) lost = true;
+  if (!lost && config_.outputDeviceIndex != -2 &&
+      (!outputStream_ || Pa_IsStreamActive(outputStream_) != 1)) {
+    lost = true;
+  }
+
+  /* The capture callback stopped being called while the stream looks alive. */
+  const uint64_t cb = stats_.captureCallbacks.load(std::memory_order_relaxed);
+  if (cb != wdLastCaptureCallbacks_) {
+    wdLastCaptureCallbacks_ = cb;
+    wdLastProgressMs_ = now;
+  } else if (now - wdLastProgressMs_ > kCaptureStallMs) {
+    lost = true;
+  }
+
+  if (lost) {
+    stats_.deviceLossEvents.store(stats_.deviceLossEvents.load(std::memory_order_relaxed) + 1,
+                                  std::memory_order_relaxed);
+  }
+  return lost;
 }
 
 /* ───────────────────── Auto-Restart ───────────────────── */
@@ -453,15 +567,27 @@ void AudioEngine::attemptRestart() {
       }
     }
 
+    stats_.restarts.store(stats_.restarts.load(std::memory_order_relaxed) + 1,
+                          std::memory_order_relaxed);
+    resetWatchdog();
     if (statusCallback_) {
       statusCallback_("Audio engine restarted successfully");
     }
     return;
   }
 
+  stats_.restartFailures.store(stats_.restartFailures.load(std::memory_order_relaxed) + 1,
+                               std::memory_order_relaxed);
+  resetWatchdog();
   if (statusCallback_) {
     statusCallback_("Failed to restart audio engine after multiple attempts");
   }
+}
+
+void AudioEngine::resetWatchdog() {
+  outputPrimed_.store(false, std::memory_order_relaxed);
+  wdLastCaptureCallbacks_ = stats_.captureCallbacks.load(std::memory_order_relaxed);
+  wdLastProgressMs_ = wdLastCheckMs_ = steadyMs();
 }
 
 /* ───────────────────── Level Control ───────────────────── */

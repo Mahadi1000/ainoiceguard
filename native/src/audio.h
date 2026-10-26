@@ -25,6 +25,7 @@
 #include <thread>
 #include <vector>
 
+#include "engine_stats.h"
 #include "ringbuffer.h"
 #include "rnnoise_wrapper.h"
 
@@ -51,6 +52,18 @@ struct AudioConfig {
   double sampleRate = 48000.0;
   unsigned long framesPerBuffer = 480;  /* 10ms @ 48kHz = RNNoise frame size */
   bool tryExclusiveMode = true;
+};
+
+/** What the engine actually opened (resolved after defaults and fallbacks). */
+struct StreamSnapshot {
+  int inputDevice = -1;          /* PortAudio index, -1 = none */
+  int outputDevice = -1;         /* -1 = none (output muted) */
+  bool inputExclusive = false;   /* WASAPI exclusive mode obtained */
+  bool outputExclusive = false;
+  double sampleRate = 0.0;
+  double inputLatencyMs = 0.0;   /* as reported by Pa_GetStreamInfo() */
+  double outputLatencyMs = 0.0;
+  size_t ringCapacity = 0;       /* samples, per ring */
 };
 
 /**
@@ -99,6 +112,19 @@ class AudioEngine {
   /** Access real-time metrics from the RNNoise wrapper (lock-free). */
   const AudioMetrics& metrics() const { return rnnoise_.metrics(); }
 
+  /** Live engine counters: xruns, drops, ring fill, timing (lock-free). */
+  const EngineStats& stats() const { return stats_; }
+
+  /** Streams as actually opened. Valid after a successful start(). */
+  StreamSnapshot streamSnapshot() const;
+
+  /** Current ring fill levels in samples (lock-free reads). */
+  size_t captureFill() const;
+  size_t outputFill() const;
+
+  /** Algorithmic delay of the suppression backend (RNNoise: one 10 ms frame). */
+  static constexpr double kBackendDelayMs = 10.0;
+
  private:
   /**
    * PortAudio capture callback (static C function).
@@ -126,6 +152,19 @@ class AudioEngine {
   /** Attempt to restart audio after a device disconnect. */
   void attemptRestart();
 
+  /**
+   * Device-loss watchdog (processing thread). Returns true if a stream has
+   * stopped or the capture callback has stalled -- i.e. a real failure, as
+   * opposed to an xrun, which is only counted.
+   */
+  bool deviceLost();
+
+  /** Re-arm the watchdog after a restart attempt. */
+  void resetWatchdog();
+
+  /** Record resolved devices, exclusive-mode result and PA latencies. */
+  void captureStreamSnapshot(int inputIdx, int outputIdx, bool inExcl, bool outExcl);
+
   /** Open PortAudio streams with current config_. */
   std::string openStreams();
 
@@ -134,7 +173,6 @@ class AudioEngine {
 
   /* State */
   std::atomic<bool> running_{false};
-  std::atomic<bool> shouldRestart_{false};
   AudioConfig config_;
   StatusCallback statusCallback_;
 
@@ -148,6 +186,21 @@ class AudioEngine {
 
   /* RNNoise processor */
   RNNoiseWrapper rnnoise_;
+
+  /* Live counters + resolved stream info. */
+  EngineStats stats_;
+  std::atomic<bool> outputPrimed_{false};  /* output ring has delivered audio once */
+  std::atomic<int> snapInputDevice_{-1};
+  std::atomic<int> snapOutputDevice_{-1};
+  std::atomic<bool> snapInputExclusive_{false};
+  std::atomic<bool> snapOutputExclusive_{false};
+  std::atomic<double> snapInputLatencyMs_{0.0};
+  std::atomic<double> snapOutputLatencyMs_{0.0};
+
+  /* Watchdog state (processing thread only). */
+  uint64_t wdLastCaptureCallbacks_ = 0;
+  int64_t wdLastProgressMs_ = 0;
+  int64_t wdLastCheckMs_ = 0;
 
   /* Processing thread */
   std::thread processingThread_;

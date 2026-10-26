@@ -15,7 +15,13 @@
  */
 
 #include <napi.h>
+
+#include <atomic>
+#include <cstdint>
+#include <string>
+
 #include "audio.h"
+#include "portaudio.h"
 
 namespace {
 
@@ -130,11 +136,139 @@ Napi::Value IsRunning(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(info.Env(), g_engine.isRunning());
 }
 
+double num(const std::atomic<uint64_t>& a) {
+  return static_cast<double>(a.load(std::memory_order_relaxed));
+}
+double num(const std::atomic<uint32_t>& a) {
+  return static_cast<double>(a.load(std::memory_order_relaxed));
+}
+
+/** Name and host API ("MME", "Windows WASAPI", ...) of a PortAudio device. */
+void SetDeviceInfo(Napi::Env env, Napi::Object& o, const char* prefix, int idx) {
+  std::string p(prefix);
+  o.Set(p + "Device", Napi::Number::New(env, idx));
+  const PaDeviceInfo* d = idx >= 0 ? Pa_GetDeviceInfo(idx) : nullptr;
+  const PaHostApiInfo* h = d ? Pa_GetHostApiInfo(d->hostApi) : nullptr;
+  o.Set(p + "Name", d && d->name ? Napi::Value(Napi::String::New(env, d->name)) : env.Null());
+  o.Set(p + "HostApi", h && h->name ? Napi::Value(Napi::String::New(env, h->name)) : env.Null());
+}
+
 /**
- * getMetrics() -> { inputRms, outputRms, vadProbability, gateGain, framesProcessed }
+ * Engine health: what was opened, xruns, ring-buffer drops/fill, per-frame
+ * processing time, estimated latency and recovery counters. All counters are
+ * cumulative since the last start(). Lock-free reads.
+ */
+Napi::Object EngineMetrics(Napi::Env env) {
+  using ainoiceguard::kFrameBudgetUs;
+  using ainoiceguard::kProcBucketBoundsUs;
+  using ainoiceguard::kProcBuckets;
+
+  const auto& s = g_engine.stats();
+  const bool running = g_engine.isRunning();
+  const auto snap = g_engine.streamSnapshot();
+  const double sr = snap.sampleRate > 0 ? snap.sampleRate : 48000.0;
+
+  Napi::Object e = Napi::Object::New(env);
+  e.Set("running", Napi::Boolean::New(env, running));
+
+  /* Streams (device names need PortAudio initialised, i.e. while running). */
+  Napi::Object streams = Napi::Object::New(env);
+  if (running) {
+    SetDeviceInfo(env, streams, "input", snap.inputDevice);
+    SetDeviceInfo(env, streams, "output", snap.outputDevice);
+  }
+  streams.Set("inputExclusive", Napi::Boolean::New(env, snap.inputExclusive));
+  streams.Set("outputExclusive", Napi::Boolean::New(env, snap.outputExclusive));
+  streams.Set("sampleRate", Napi::Number::New(env, snap.sampleRate));
+  streams.Set("ringCapacity", Napi::Number::New(env, double(snap.ringCapacity)));
+  e.Set("streams", streams);
+
+  Napi::Object xruns = Napi::Object::New(env);
+  xruns.Set("inputUnderflow", Napi::Number::New(env, num(s.inputUnderflows)));
+  xruns.Set("inputOverflow", Napi::Number::New(env, num(s.inputOverflows)));
+  xruns.Set("outputUnderflow", Napi::Number::New(env, num(s.outputUnderflows)));
+  xruns.Set("outputOverflow", Napi::Number::New(env, num(s.outputOverflows)));
+  e.Set("xruns", xruns);
+
+  Napi::Object callbacks = Napi::Object::New(env);
+  callbacks.Set("capture", Napi::Number::New(env, num(s.captureCallbacks)));
+  callbacks.Set("output", Napi::Number::New(env, num(s.outputCallbacks)));
+  e.Set("callbacks", callbacks);
+
+  const double fills = num(s.fillSamples);
+  const double capMean = fills > 0 ? num(s.captureFillSum) / fills : 0.0;
+  const double outMean = fills > 0 ? num(s.outputFillSum) / fills : 0.0;
+  const uint32_t outMin = s.outputFillMin.load(std::memory_order_relaxed);
+
+  Napi::Object ring = Napi::Object::New(env);
+  ring.Set("captureFill", Napi::Number::New(env, double(running ? g_engine.captureFill() : 0)));
+  ring.Set("outputFill", Napi::Number::New(env, double(running ? g_engine.outputFill() : 0)));
+  ring.Set("captureFillMean", Napi::Number::New(env, capMean));
+  ring.Set("captureFillMax", Napi::Number::New(env, num(s.captureFillMax)));
+  ring.Set("outputFillMean", Napi::Number::New(env, outMean));
+  ring.Set("outputFillMin", outMin == UINT32_MAX ? env.Null()
+                                                 : Napi::Value(Napi::Number::New(env, outMin)));
+  ring.Set("outputFillMax", Napi::Number::New(env, num(s.outputFillMax)));
+  ring.Set("captureDroppedSamples", Napi::Number::New(env, num(s.captureDroppedSamples)));
+  ring.Set("outputDroppedSamples", Napi::Number::New(env, num(s.outputDroppedSamples)));
+  ring.Set("outputUnderrunEvents", Napi::Number::New(env, num(s.outputUnderrunEvents)));
+  ring.Set("outputUnderrunSamples", Napi::Number::New(env, num(s.outputUnderrunSamples)));
+  e.Set("ring", ring);
+
+  const double frames = num(s.procFrames);
+  Napi::Object proc = Napi::Object::New(env);
+  proc.Set("frames", Napi::Number::New(env, frames));
+  proc.Set("meanUs", Napi::Number::New(env, frames > 0 ? num(s.procTotalUs) / frames : 0.0));
+  proc.Set("maxUs", Napi::Number::New(env, num(s.procMaxUs)));
+  proc.Set("budgetUs", Napi::Number::New(env, kFrameBudgetUs));
+  proc.Set("overruns", Napi::Number::New(env, num(s.procOverruns)));
+  Napi::Array bounds = Napi::Array::New(env);
+  Napi::Array counts = Napi::Array::New(env);
+  for (size_t i = 0; i < kProcBuckets; i++) {
+    bounds.Set(uint32_t(i), i < kProcBuckets - 1 ? Napi::Value(Napi::Number::New(env, kProcBucketBoundsUs[i]))
+                                                  : env.Null()); /* null = open-ended */
+    counts.Set(uint32_t(i), Napi::Number::New(env, num(s.procHist[i])));
+  }
+  proc.Set("histogramUpperUs", bounds);
+  proc.Set("histogramCounts", counts);
+  e.Set("processing", proc);
+
+  /*
+   * Estimated end-to-end latency: PortAudio-reported device latency on both
+   * sides + mean time spent waiting in each ring + the backend's algorithmic
+   * delay. A measured value comes from tools/ (see docs/phase3-live-metrics.md).
+   */
+  const bool outputOn = snap.outputDevice >= 0;
+  const double capRingMs = capMean * 1000.0 / sr;
+  const double outRingMs = outputOn ? outMean * 1000.0 / sr : 0.0;
+  Napi::Object lat = Napi::Object::New(env);
+  lat.Set("inputDeviceMs", Napi::Number::New(env, snap.inputLatencyMs));
+  lat.Set("outputDeviceMs", Napi::Number::New(env, snap.outputLatencyMs));
+  lat.Set("captureRingMs", Napi::Number::New(env, capRingMs));
+  lat.Set("outputRingMs", Napi::Number::New(env, outRingMs));
+  lat.Set("backendMs", Napi::Number::New(env, ainoiceguard::AudioEngine::kBackendDelayMs));
+  lat.Set("estimatedTotalMs",
+          Napi::Number::New(env, snap.inputLatencyMs + capRingMs +
+                                     ainoiceguard::AudioEngine::kBackendDelayMs + outRingMs +
+                                     (outputOn ? snap.outputLatencyMs : 0.0)));
+  e.Set("latency", lat);
+
+  Napi::Object rec = Napi::Object::New(env);
+  rec.Set("restarts", Napi::Number::New(env, num(s.restarts)));
+  rec.Set("restartFailures", Napi::Number::New(env, num(s.restartFailures)));
+  rec.Set("deviceLossEvents", Napi::Number::New(env, num(s.deviceLossEvents)));
+  e.Set("recovery", rec);
+
+  return e;
+}
+
+/**
+ * getMetrics() -> { inputRms, outputRms, vadProbability, gateGain,
+ *                   framesProcessed, noiseFloor, engine: {...} }
  *
  * Returns a snapshot of real-time audio metrics. Lock-free atomic reads.
  * Call this from a polling interval (e.g. every 100ms) to animate the UI meter.
+ * `engine` holds the health counters described in EngineMetrics().
  */
 Napi::Value GetMetrics(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
@@ -155,6 +289,7 @@ Napi::Value GetMetrics(const Napi::CallbackInfo& info) {
   result.Set("noiseFloor", Napi::Number::New(env,
       static_cast<double>(m.noiseFloor.load(std::memory_order_relaxed))));
 
+  result.Set("engine", EngineMetrics(env));
   return result;
 }
 

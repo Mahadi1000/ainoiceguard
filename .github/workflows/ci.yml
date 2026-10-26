@@ -45,12 +45,13 @@ jobs:
       - name: Build ng_bench
         run: |
           cmake -S native -B deps/bench-build -DCMAKE_BUILD_TYPE=Release -DNG_BUILD_BENCH=ON
-          cmake --build deps/bench-build --target ng_bench --parallel
-      - name: Golden regression test
+          cmake --build deps/bench-build --target ng_bench ng_engine_tests --parallel
+      - name: Golden regression + native unit tests
         env:
           NG_BENCH_REQUIRED: '1'
           NG_BENCH_BIN: deps/bench-build/ng_bench
-        run: node --test --test-reporter=spec test/golden.test.js
+          NG_ENGINE_TESTS_BIN: deps/bench-build/ng_engine_tests
+        run: node --test --test-reporter=spec test/golden.test.js test/native-unit.test.js
 
   build-linux:
     runs-on: ubuntu-latest

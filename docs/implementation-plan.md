@@ -98,6 +98,8 @@ Mic ─PortAudio capture cb─► captureRing_ (SPSC, 4096 f32) ─► processin
 - **2.3** Packaging: the model ships as an `extraResources` file outside the asar archive. The backend choice is a runtime setting (default RNNoise until it is validated live), with automatic fallback to RNNoise if DFN fails to load.
 
 ### Phase 3: live measurements (needed for both backends)
+
+**Status 2026-10-24:** implemented on `phase3-live-metrics`; see [phase3-live-metrics.md](phase3-live-metrics.md). The measured-latency tool (3.3, measured part) is deferred until a second capture path (VB-Cable or loopback) is available.
 - **3.1** Count xruns per stream instead of restarting on them (fixes L5); keep restarts for real errors. This is the one engine behaviour change needed early, because underruns can't be measured otherwise.
 - **3.2** Add atomic counters: a processing-time histogram (µs buckets), dropped samples on the capture and output rings (L6), ring fill min/max, and an overrun count against the 10 ms budget.
 - **3.3** End-to-end latency is reported in two ways:

@@ -138,6 +138,11 @@ if(NG_BUILD_BENCH)
   target_compile_definitions(ng_bench PRIVATE
     NG_RNNOISE_COMMIT="a9afcccb3c4f01e6e76a1ef67ccb58b7799856bf"
   )
+
+  # Unit tests for the engine's lock-free stats and ring buffer (no devices).
+  add_executable(ng_engine_tests tests/engine_tests.cpp)
+  target_include_directories(ng_engine_tests PRIVATE src)
+  target_compile_features(ng_engine_tests PRIVATE cxx_std_17)
   if(NOT MSVC)
     target_link_libraries(ng_bench PRIVATE m)
   endif()
