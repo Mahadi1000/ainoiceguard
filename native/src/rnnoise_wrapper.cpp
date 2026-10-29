@@ -2,7 +2,8 @@
  * RNNoise wrapper - noise suppression pipeline.
  *
  * Processing chain per 10ms frame:
- *   HPF 80Hz → RNNoise (single pass) → VAD-proportional gate → comfort noise
+ *   HPF 80Hz → RNNoise (single pass) → speech AGC → VAD-proportional gate
+ *   → comfort noise → peak limiter (-1 dBFS)
  *
  * Key design decisions:
  *   - Single RNNoise pass: double-pass causes robotic artifacts on voice.
@@ -96,8 +97,8 @@ static constexpr float kAbsoluteMinFloor = 0.0003f;
 static constexpr float kFallbackThreshold = 0.002f;
 
 /*
- * Makeup gain to compensate for the ~2dB level reduction RNNoise applies.
- * 1.26 ≈ +2dB. Keeps processed voice at roughly the same perceived level.
+ * Fixed makeup gain used when AGC is disabled (and the AGC's starting gain):
+ * compensates for the ~2dB level reduction RNNoise applies. 1.26 ≈ +2dB.
  */
 static constexpr float kMakeupGain = 1.26f;
 
@@ -133,7 +134,12 @@ bool RNNoiseWrapper::init() {
   prevNoise_           = 0.0f;
 
   initFilters();
+  agc_.reset();
+  limiter_.reset();
 
+  metrics_.agcGainDb.store(agc_.gainDb(), std::memory_order_relaxed);
+  metrics_.limiterReductionDb.store(0.0f, std::memory_order_relaxed);
+  metrics_.limitedFrames.store(0,      std::memory_order_relaxed);
   metrics_.framesProcessed.store(0,    std::memory_order_relaxed);
   metrics_.inputRms.store(0.0f,        std::memory_order_relaxed);
   metrics_.outputRms.store(0.0f,       std::memory_order_relaxed);
@@ -224,13 +230,21 @@ float RNNoiseWrapper::processFrame(float* frame) {
     }
   }
 
-  /* ── 6. Makeup gain (+2dB): compensate for RNNoise level reduction ── */
-  for (size_t i = 0; i < kRNNoiseFrameSize; i++) {
-    frame[i] = std::clamp(frame[i] * kMakeupGain, -1.0f, 1.0f);
-  }
-
-  /* ── 7. Measure post-RNNoise RMS for adaptive floor ── */
+  /* ── 6. Measure post-RNNoise RMS, before any gain, for the adaptive floor,
+   *       the gate and the AGC (so the gate does not react to AGC moves) ── */
   float postRms = computeRms(frame, kRNNoiseFrameSize);
+
+  /* ── 7. Gain: speech AGC (VAD-gated), or the former fixed +2 dB makeup.
+   *       No clamp here any more -- the limiter at the end handles peaks. ── */
+  if (agcEnabled_.load(std::memory_order_relaxed)) {
+    /* Noise-floor test on the HPF'd input (before RNNoise): see dynamics.h. */
+    const float preRms = computeRms(filtered, kRNNoiseFrameSize);
+    agc_.process(frame, kRNNoiseFrameSize, postRms, vad, preRms);
+    metrics_.agcGainDb.store(agc_.gainDb(), std::memory_order_relaxed);
+  } else {
+    for (size_t i = 0; i < kRNNoiseFrameSize; i++) frame[i] *= kMakeupGain;
+    metrics_.agcGainDb.store(linToDb(kMakeupGain), std::memory_order_relaxed);
+  }
 
   /* ── 8. Update adaptive noise floor ── */
   updateNoiseFloor(postRms, vad);
@@ -254,7 +268,12 @@ float RNNoiseWrapper::processFrame(float* frame) {
    *         Prevents "dead channel" sensation and click on re-open. ── */
   applySoftSilence(frame);
 
-  /* ── 13. Output RMS + frame count ── */
+  /* ── 13. Peak limiter (last stage): output never exceeds -1 dBFS ── */
+  const float minGain = limiter_.process(frame, kRNNoiseFrameSize);
+  metrics_.limiterReductionDb.store(linToDb(minGain), std::memory_order_relaxed);
+  if (minGain < 1.0f) metrics_.limitedFrames.fetch_add(1, std::memory_order_relaxed);
+
+  /* ── 14. Output RMS + frame count ── */
   float outputRms = computeRms(frame, kRNNoiseFrameSize);
   metrics_.outputRms.store(outputRms, std::memory_order_relaxed);
   metrics_.framesProcessed.fetch_add(1, std::memory_order_relaxed);
@@ -415,6 +434,14 @@ float RNNoiseWrapper::getVadThreshold() const {
 
 void RNNoiseWrapper::setComfortNoise(bool enabled) {
   comfortNoiseEnabled_.store(enabled, std::memory_order_relaxed);
+}
+
+void RNNoiseWrapper::setAgcEnabled(bool enabled) {
+  agcEnabled_.store(enabled, std::memory_order_relaxed);
+}
+
+bool RNNoiseWrapper::isAgcEnabled() const {
+  return agcEnabled_.load(std::memory_order_relaxed);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

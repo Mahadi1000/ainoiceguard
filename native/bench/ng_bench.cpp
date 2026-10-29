@@ -14,7 +14,7 @@
  * Usage:
  *   ng_bench process --backend <name> --in <in.wav> --out <out.wav>
  *                    [--json <stats.json>] [--format f32|s16] [--repeat N]
- *                    rnnoise-chain: [--level 0..1] [--vad 0..1]
+ *                    rnnoise-chain: [--level 0..1] [--vad 0..1] [--agc 1|0]
  *                    dfn:           --dfn-model <model.tar.gz>
  *                                   [--atten-lim dB (100)] [--pf-beta (0)]
  *   ng_bench compare --a <a.wav> --b <b.wav> [--tol 1e-4]
@@ -85,7 +85,7 @@ int usage() {
                " --in IN.wav --out OUT.wav\n"
                "                   [--json STATS.json] [--format f32|s16]\n"
                "                   [--repeat N]  (N>1: first pass is warm-up, excluded from timing)\n"
-               "                   rnnoise-chain: [--level 0..1] [--vad 0..1]\n"
+               "                   rnnoise-chain: [--level 0..1] [--vad 0..1] [--agc 1|0]\n"
 #ifdef NG_WITH_DFN
                "                   dfn: --dfn-model MODEL.tar.gz [--atten-lim dB] [--pf-beta B]\n"
 #endif
@@ -174,11 +174,12 @@ class RnnoiseRaw : public Backend {
 
 class RnnoiseChain : public Backend {
  public:
-  RnnoiseChain(float level, float vad) : level_(level), vad_(vad) {}
+  RnnoiseChain(float level, float vad, bool agc) : level_(level), vad_(vad), agc_(agc) {}
   std::string open() override {
     if (!chain_.init()) return "RNNoise init failed";
     chain_.setSuppressionLevel(level_);
     chain_.setVadThreshold(vad_);
+    chain_.setAgcEnabled(agc_);
     return "";
   }
   size_t frameLength() const override { return kRNNoiseFrameSize; }
@@ -188,6 +189,7 @@ class RnnoiseChain : public Backend {
  private:
   RNNoiseWrapper chain_;
   float level_, vad_;
+  bool agc_;
 };
 
 #ifdef NG_WITH_DFN
@@ -237,6 +239,7 @@ int cmdProcess(const Args& args) {
   const std::string fmtName = get(args, "format", "f32");
   const float level = std::stof(get(args, "level", "1.0"));
   const float vad = std::stof(get(args, "vad", "0.5"));
+  const bool agc = get(args, "agc", "1") != "0";
   const int repeat = std::max(1, std::stoi(get(args, "repeat", "1")));
   const std::string dfnModel = get(args, "dfn-model");
   const float attenLim = std::stof(get(args, "atten-lim", "100"));
@@ -250,7 +253,7 @@ int cmdProcess(const Args& args) {
 
   auto makeBackend = [&]() -> Backend* {
     if (backend == "rnnoise-raw") return new RnnoiseRaw();
-    if (backend == "rnnoise-chain") return new RnnoiseChain(level, vad);
+    if (backend == "rnnoise-chain") return new RnnoiseChain(level, vad, agc);
 #ifdef NG_WITH_DFN
     if (backend == "dfn") return new DeepFilterNet(dfnModel, attenLim, pfBeta);
 #endif
@@ -368,7 +371,7 @@ int cmdProcess(const Args& args) {
       "  \"samples\": %zu,\n"
       "  \"frames\": %zu,\n"
       "  \"audio_seconds\": %.6f,\n"
-      "  \"params\": { \"level\": %.4f, \"vad_threshold\": %.4f, \"dfn_model\": \"%s\", "
+      "  \"params\": { \"level\": %.4f, \"vad_threshold\": %.4f, \"agc\": %s, \"dfn_model\": \"%s\", "
       "\"atten_lim_db\": %.2f, \"pf_beta\": %.4f },\n"
       "  \"passes\": { \"total\": %d, \"measured\": %zu },\n"
       "  \"open_ms\": %.3f,\n"
@@ -388,6 +391,7 @@ int cmdProcess(const Args& args) {
       "}\n",
       backend.c_str(), NG_RNNOISE_COMMIT, NG_DFN_VERSION, jsonEscape(in).c_str(),
       jsonEscape(out).c_str(), kSampleRate, frameLen, n, frames, audioSec, level, vad,
+      agc ? "true" : "false",
       jsonEscape(dfnModel).c_str(), attenLim, pfBeta, repeat, measuredPasses, openMs,
       isDfn ? "lsnr_db" : "vad", frames ? scoreSum / double(frames) : 0.0, firstFrameUs,
       meanUs, percentile(steady, 50), percentile(steady, 95), percentile(steady, 99), maxUs,

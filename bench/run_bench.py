@@ -215,9 +215,13 @@ def main():
                             os.path.join(out, wav_rel), os.path.join(out, json_rel),
                             args.repeat, startup_s)
             else:
-                cmd = [args.bench, "process", "--backend", be, "--in", fx["input"],
+                # "rnnoise-chain-noagc" = the chain with AGC off (fixed +2 dB, pre-Phase-4).
+                ng_backend = "rnnoise-chain" if be == "rnnoise-chain-noagc" else be
+                cmd = [args.bench, "process", "--backend", ng_backend, "--in", fx["input"],
                        "--out", os.path.join(out, wav_rel), "--json", os.path.join(out, json_rel),
                        "--repeat", str(args.repeat)]
+                if be == "rnnoise-chain-noagc":
+                    cmd += ["--agc", "0"]
                 if be == "dfn":
                     cmd += ["--dfn-model", args.dfn_model]
                 flags = 0
