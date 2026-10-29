@@ -10,6 +10,8 @@
  *   - getNoiseLevel()             -> read current suppression level
  *   - setVadThreshold(threshold)  -> adjust VAD gate threshold [0.0, 1.0]
  *   - getVadThreshold()           -> read current VAD threshold
+ *   - setAgcEnabled(bool)         -> speech AGC on (default) / fixed +2 dB
+ *   - getAgcEnabled()             -> read AGC state
  *   - isRunning()                 -> check engine state
  *   - getMetrics()                -> real-time audio metrics
  */
@@ -130,6 +132,21 @@ Napi::Value GetVadThreshold(const Napi::CallbackInfo& info) {
 }
 
 /**
+ * setAgcEnabled(enabled) -> void
+ */
+void SetAgcEnabled(const Napi::CallbackInfo& info) {
+  if (info.Length() < 1 || !info[0].IsBoolean()) return;
+  g_engine.setAgcEnabled(info[0].As<Napi::Boolean>().Value());
+}
+
+/**
+ * getAgcEnabled() -> boolean
+ */
+Napi::Value GetAgcEnabled(const Napi::CallbackInfo& info) {
+  return Napi::Boolean::New(info.Env(), g_engine.isAgcEnabled());
+}
+
+/**
  * isRunning() -> boolean
  */
 Napi::Value IsRunning(const Napi::CallbackInfo& info) {
@@ -182,6 +199,11 @@ Napi::Object EngineMetrics(Napi::Env env) {
   streams.Set("sampleRate", Napi::Number::New(env, snap.sampleRate));
   streams.Set("ringCapacity", Napi::Number::New(env, double(snap.ringCapacity)));
   e.Set("streams", streams);
+
+  Napi::Object sched = Napi::Object::New(env);
+  sched.Set("mmcss", Napi::Boolean::New(env, snap.processingMmcss));
+  sched.Set("wake", Napi::String::New(env, "event"));
+  e.Set("scheduling", sched);
 
   Napi::Object xruns = Napi::Object::New(env);
   xruns.Set("inputUnderflow", Napi::Number::New(env, num(s.inputUnderflows)));
@@ -288,6 +310,13 @@ Napi::Value GetMetrics(const Napi::CallbackInfo& info) {
       static_cast<double>(m.framesProcessed.load(std::memory_order_relaxed))));
   result.Set("noiseFloor", Napi::Number::New(env,
       static_cast<double>(m.noiseFloor.load(std::memory_order_relaxed))));
+  result.Set("agcEnabled", Napi::Boolean::New(env, g_engine.isAgcEnabled()));
+  result.Set("agcGainDb", Napi::Number::New(env,
+      static_cast<double>(m.agcGainDb.load(std::memory_order_relaxed))));
+  result.Set("limiterReductionDb", Napi::Number::New(env,
+      static_cast<double>(m.limiterReductionDb.load(std::memory_order_relaxed))));
+  result.Set("limitedFrames", Napi::Number::New(env,
+      static_cast<double>(m.limitedFrames.load(std::memory_order_relaxed))));
 
   result.Set("engine", EngineMetrics(env));
   return result;
@@ -304,6 +333,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getNoiseLevel", Napi::Function::New(env, GetNoiseLevel));
   exports.Set("setVadThreshold", Napi::Function::New(env, SetVadThreshold));
   exports.Set("getVadThreshold", Napi::Function::New(env, GetVadThreshold));
+  exports.Set("setAgcEnabled", Napi::Function::New(env, SetAgcEnabled));
+  exports.Set("getAgcEnabled", Napi::Function::New(env, GetAgcEnabled));
   exports.Set("isRunning", Napi::Function::New(env, IsRunning));
   exports.Set("getMetrics", Napi::Function::New(env, GetMetrics));
   return exports;

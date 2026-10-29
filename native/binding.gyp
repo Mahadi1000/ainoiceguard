@@ -23,7 +23,8 @@
               "-lwinmm.lib",
               "-luuid.lib",
               "-lksuser.lib",
-              "-ladvapi32.lib"
+              "-ladvapi32.lib",
+              "-lavrt.lib"
             ],
             "msvs_settings": {
               "VCCLCompilerTool": {

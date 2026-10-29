@@ -5,10 +5,13 @@
  *   1. HPF 80Hz  — removes mains hum, DC offset, handling rumble
  *   2. RNNoise   — single-pass neural noise suppression (VAD + spectral)
  *   3. Blend     — dry/wet mix for partial suppression levels
- *   4. Makeup gain (+2dB) — compensates for RNNoise level reduction
+ *   4. Gain      — speech AGC (default; VAD-gated, target -18 dBFS) or the
+ *                  former fixed +2 dB makeup gain when AGC is disabled
  *   5. Soft gate — VAD-proportional gain with hold timer and energy backup
  *   6. Comfort noise — sub-bass shaped noise during closed gate
- *   7. Metrics   — lock-free atomic RMS / VAD / gain reporting to UI
+ *   7. Limiter   — zero-latency peak limiter, -1 dBFS ceiling (replaces the
+ *                  former hard clamp at +/-1.0, which clipped)
+ *   8. Metrics   — lock-free atomic RMS / VAD / gain reporting to UI
  *
  * Why single pass:
  *   Running RNNoise twice causes robotic metallic artifacts. The second pass
@@ -32,6 +35,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "dynamics.h"
+
 struct DenoiseState;
 
 namespace ainoiceguard {
@@ -45,6 +50,9 @@ struct AudioMetrics {
   std::atomic<float>    currentGain{1.0f};
   std::atomic<float>    noiseFloor{0.0f};
   std::atomic<uint64_t> framesProcessed{0};
+  std::atomic<float>    agcGainDb{0.0f};         /* current AGC (or fixed makeup) gain */
+  std::atomic<float>    limiterReductionDb{0.0f}; /* deepest limiting in the last frame (<= 0) */
+  std::atomic<uint64_t> limitedFrames{0};        /* frames where the limiter engaged */
 };
 
 struct BiquadState {
@@ -84,6 +92,10 @@ class RNNoiseWrapper {
 
   void  setComfortNoise(bool enabled);
 
+  /** Speech AGC on (default) or fixed +2 dB makeup gain. Lock-free. */
+  void  setAgcEnabled(bool enabled);
+  bool  isAgcEnabled() const;
+
   bool  isInitialized() const { return state_ != nullptr; }
 
   const AudioMetrics& metrics() const { return metrics_; }
@@ -94,6 +106,10 @@ class RNNoiseWrapper {
   std::atomic<float> suppressionLevel_{1.0f};
   std::atomic<float> vadThreshold_{0.50f};   /* lowered from 0.65: catches breathy speech */
   std::atomic<bool>  comfortNoiseEnabled_{true};
+  std::atomic<bool>  agcEnabled_{true};
+
+  SpeechAgc   agc_;
+  PeakLimiter limiter_;
 
   float    smoothGain_         = 1.0f;
   int      holdCounter_        = 0;

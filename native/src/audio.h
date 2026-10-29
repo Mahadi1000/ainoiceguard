@@ -28,6 +28,7 @@
 #include "engine_stats.h"
 #include "ringbuffer.h"
 #include "rnnoise_wrapper.h"
+#include "wake_event.h"
 
 /* Forward-declare PortAudio types to avoid including portaudio.h in this header. */
 typedef void PaStream;
@@ -64,6 +65,7 @@ struct StreamSnapshot {
   double inputLatencyMs = 0.0;   /* as reported by Pa_GetStreamInfo() */
   double outputLatencyMs = 0.0;
   size_t ringCapacity = 0;       /* samples, per ring */
+  bool processingMmcss = false;  /* processing thread registered with MMCSS (Windows) */
 };
 
 /**
@@ -108,6 +110,10 @@ class AudioEngine {
   /** Set VAD gate threshold [0..1]. Higher = more aggressive gating. */
   void setVadThreshold(float threshold);
   float getVadThreshold() const;
+
+  /** Speech AGC on/off (off = fixed +2 dB). Thread-safe. */
+  void setAgcEnabled(bool enabled) { rnnoise_.setAgcEnabled(enabled); }
+  bool isAgcEnabled() const { return rnnoise_.isAgcEnabled(); }
 
   /** Access real-time metrics from the RNNoise wrapper (lock-free). */
   const AudioMetrics& metrics() const { return rnnoise_.metrics(); }
@@ -186,6 +192,10 @@ class AudioEngine {
 
   /* RNNoise processor */
   RNNoiseWrapper rnnoise_;
+
+  /* Capture callback -> processing thread wake-up (replaces sleep polling). */
+  WakeEvent wake_;
+  std::atomic<bool> mmcssActive_{false};
 
   /* Live counters + resolved stream info. */
   EngineStats stats_;

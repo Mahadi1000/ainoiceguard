@@ -109,6 +109,8 @@ Mic ─PortAudio capture cb─► captureRing_ (SPSC, 4096 f32) ─► processin
 - **3.5** All of this is exposed through `getMetrics()` without changing the existing fields.
 
 ### Phase 4: after the suppression engine is validated, in priority order
+
+**Status 2026-10-27:** Phase 4a (processing-thread MMCSS + event wake-up, AGC, limiter) is implemented on `phase4-scheduling-agc`; see [phase4a-scheduling-agc.md](phase4a-scheduling-agc.md). The scheduling fix was moved ahead of the AGC because Phase 3 measured dropped mic audio. The AGC range is +18/−12 dB, not ±12 dB, so that T4.2 is achievable. Still to do: device handling (4b) and the virtual mic.
 1. **AGC + limiter (L10):**
    - a VAD-gated slow AGC targeting about −18 dBFS for speech, with ±12 dB range and roughly 1 s attack/release;
    - a soft-knee peak limiter (≤ −1 dBFS ceiling, 1–2 ms attack) replacing `std::clamp`;

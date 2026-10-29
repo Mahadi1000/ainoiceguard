@@ -22,6 +22,7 @@
 
 #ifdef _WIN32
 #include "pa_win_wasapi.h"
+#include <avrt.h> /* MMCSS: AvSetMmThreadCharacteristicsW */
 #endif
 
 namespace ainoiceguard {
@@ -45,6 +46,10 @@ static constexpr int kMaxRestartAttempts = 5;
  */
 static constexpr int64_t kWatchdogIntervalMs = 250;
 static constexpr int64_t kCaptureStallMs = 1000;
+
+/* Max time the processing thread blocks waiting for audio before re-checking
+ * the running flag and watchdog. Frames normally arrive every 10 ms. */
+static constexpr unsigned kWakeTimeoutMs = 20;
 
 static int64_t steadyMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -339,6 +344,7 @@ StreamSnapshot AudioEngine::streamSnapshot() const {
   s.inputLatencyMs = snapInputLatencyMs_.load(std::memory_order_relaxed);
   s.outputLatencyMs = snapOutputLatencyMs_.load(std::memory_order_relaxed);
   s.ringCapacity = captureRing_ ? captureRing_->capacity() : 0;
+  s.processingMmcss = mmcssActive_.load(std::memory_order_relaxed);
   return s;
 }
 
@@ -390,6 +396,9 @@ int AudioEngine::captureCallback(const void* input, void* /*output*/,
    */
   const size_t written = engine->captureRing_->write(samples, frameCount);
   if (written < frameCount) bump(st.captureDroppedSamples, frameCount - written);
+
+  /* Wake the processing thread (non-blocking; see wake_event.h). */
+  engine->wake_.signal();
 
   /*
    * xruns are counted only. They are normal transient events (scheduling
@@ -457,6 +466,19 @@ void AudioEngine::processingLoop() {
    */
   float frame[kRNNoiseFrameSize];
 
+#ifdef _WIN32
+  /*
+   * Register with MMCSS ("Pro Audio") so the scheduler treats this thread as
+   * real-time audio. Phase 3 measured >100 ms gaps for the former
+   * normal-priority thread (dropped mic audio). Best effort: on failure the
+   * thread simply keeps normal priority.
+   */
+  DWORD mmcssTask = 0;
+  HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &mmcssTask);
+  if (mmcss) AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_HIGH);
+  mmcssActive_.store(mmcss != nullptr, std::memory_order_relaxed);
+#endif
+
   wdLastCaptureCallbacks_ = stats_.captureCallbacks.load(std::memory_order_relaxed);
   wdLastProgressMs_ = wdLastCheckMs_ = steadyMs();
 
@@ -483,12 +505,11 @@ void AudioEngine::processingLoop() {
                         uint32_t(outputRing_->available_read()), outputStream_ != nullptr);
     } else {
       /*
-       * Not enough data yet. Sleep briefly to avoid spinning at 100% CPU.
-       * 0.5ms sleep is fine: at 48kHz, a 480-sample frame arrives every 10ms,
-       * so we'll check ~10 times per frame period. The ring buffer smooths
-       * any scheduling jitter.
+       * Not enough data yet: block until the capture callback signals new
+       * audio (instead of the former 0.5 ms sleep-poll). The timeout keeps
+       * the watchdog and the running flag serviced if callbacks stop.
        */
-      std::this_thread::sleep_for(std::chrono::microseconds(500));
+      wake_.wait(kWakeTimeoutMs);
     }
 
     /* Handle real device loss (not xruns -- those are only counted). */
@@ -496,6 +517,11 @@ void AudioEngine::processingLoop() {
       attemptRestart();
     }
   }
+
+#ifdef _WIN32
+  if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+  mmcssActive_.store(false, std::memory_order_relaxed);
+#endif
 }
 
 /* ───────────────────── Device-Loss Watchdog ───────────────────── */

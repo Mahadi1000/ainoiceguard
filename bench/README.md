@@ -15,6 +15,7 @@ WAV fixtures. Nothing here is shipped with the app. See
 | `bench/run_bench.py` | Runs every fixture through every backend, then scores |
 | `bench/score.py` | Delay, SI-SDR, STOI, DNSMOS, attenuation, clipping, timing summary |
 | `bench/compare.py` | Paired per-file differences vs a baseline backend, with bootstrap CIs |
+| `bench/agc_check.py` | AGC/limiter acceptance (T4.1/T4.2) on 30 s of real speech; backend `rnnoise-chain-noagc` = AGC off |
 | `bench/make_golden.py` | Regenerates `test/golden/` (only when an output change is intended) |
 | `test/golden.test.js` | Golden regression test (skipped if `ng_bench` is not built) |
 
