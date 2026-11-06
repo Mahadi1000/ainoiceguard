@@ -155,6 +155,7 @@ std::string AudioEngine::start(const AudioConfig& config) {
   outputPrimed_.store(false, std::memory_order_relaxed);
   forceDeviceLoss_.store(false, std::memory_order_relaxed);
   inOutage_ = false;
+  resetDrift();
 
   /* Serialise with getDevices()/getMetrics() device lookups (see paMutex). */
   std::lock_guard<std::mutex> lock(paMutex());
@@ -520,6 +521,13 @@ int AudioEngine::outputCallback(const void* /*input*/, void* output,
 
   size_t read = engine->outputRing_->read(out, frameCount);
 
+  /* For drift control: when, and how much, the device last consumed. */
+  engine->lastOutputReadNs_.store(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count(),
+      std::memory_order_relaxed);
+  engine->lastOutputReadCount_.store(uint32_t(frameCount), std::memory_order_relaxed);
+
   /* Zero-fill remainder if underrun (not enough processed data yet). */
   if (read < frameCount) {
     memset(out + read, 0, (frameCount - read) * sizeof(float));
@@ -580,8 +588,7 @@ void AudioEngine::processingLoop() {
 
       /* If output is disabled, discard processed audio (no monitoring). */
       if (outputStream_) {
-        const size_t w = outputRing_->write(frame, kRNNoiseFrameSize);
-        if (w < kRNNoiseFrameSize) bump(stats_.outputDroppedSamples, kRNNoiseFrameSize - w);
+        writeOutput(frame, kRNNoiseFrameSize);
       }
 
       /* Ring fill after this frame (latency + drift indicator). */
@@ -606,6 +613,59 @@ void AudioEngine::processingLoop() {
   if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
   mmcssActive_.store(false, std::memory_order_relaxed);
 #endif
+}
+
+/* ───────────────────── Output + Drift Compensation ───────────────────── */
+
+void AudioEngine::writeOutput(const float* frame, size_t n) {
+  if (!config_.driftCompensation) {
+    const size_t w = outputRing_->write(frame, n);
+    if (w < n) bump(stats_.outputDroppedSamples, n - w);
+    return;
+  }
+
+  /* Resample by the current ratio (1.0 during warm-up), then write. */
+  float out[DriftResampler::kMaxIn + 16];
+  const size_t m = driftRs_.process(frame, n, out, sizeof(out) / sizeof(out[0]));
+  const size_t w = outputRing_->write(out, m);
+  if (w < m) bump(stats_.outputDroppedSamples, m - w);
+
+  /*
+   * Continuous ring level: fill minus the part of the next device block
+   * already "used" since the last output callback (see drift.h). Before the
+   * device has read anything, there is no clock to follow: hold ratio 1.
+   */
+  const int64_t lastNs = lastOutputReadNs_.load(std::memory_order_relaxed);
+  const uint32_t block = lastOutputReadCount_.load(std::memory_order_relaxed);
+  if (lastNs == 0 || block == 0) return;
+  const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+  const double blockSeconds = double(block) / config_.sampleRate;
+  const double level = continuousLevel(double(outputRing_->available_read()),
+                                       double(nowNs - lastNs) * 1e-9, blockSeconds, double(block));
+  driftRs_.setRatio(driftCtl_.update(level));
+  driftPpm_.store(driftCtl_.ppm(), std::memory_order_relaxed);
+  driftLevel_.store(driftCtl_.fillEma(), std::memory_order_relaxed);
+}
+
+void AudioEngine::resetDrift() {
+  driftRs_.reset();
+  driftCtl_.reset();
+  lastOutputReadNs_.store(0, std::memory_order_relaxed);
+  lastOutputReadCount_.store(0, std::memory_order_relaxed);
+  driftPpm_.store(0.0, std::memory_order_relaxed);
+  driftLevel_.store(0.0, std::memory_order_relaxed);
+  driftActive_.store(config_.driftCompensation && config_.output.kind != DeviceSpec::Kind::None,
+                     std::memory_order_relaxed);
+}
+
+DriftSnapshot AudioEngine::driftSnapshot() const {
+  DriftSnapshot d;
+  d.enabled = driftActive_.load(std::memory_order_relaxed);
+  d.ppm = driftPpm_.load(std::memory_order_relaxed);
+  d.level = driftLevel_.load(std::memory_order_relaxed);
+  d.targetLevel = driftCtl_.config().targetFill;
+  return d;
 }
 
 /* ───────────────────── Device-Loss Watchdog ───────────────────── */
@@ -705,6 +765,7 @@ void AudioEngine::attemptRestart() {
     stats_.restarts.store(stats_.restarts.load(std::memory_order_relaxed) + 1,
                           std::memory_order_relaxed);
     resetWatchdog();
+    resetDrift(); /* the (re)opened output may be a different clock */
     inOutage_ = false;
     if (statusCallback_) {
       statusCallback_("restarted", "Audio reconnected: " + openedIn_.name);

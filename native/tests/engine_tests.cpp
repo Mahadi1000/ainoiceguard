@@ -6,11 +6,14 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include "device_select.h"
+#include "drift.h"
 #include "dynamics.h"
 #include "engine_stats.h"
+#include "loopback.h"
 #include "ringbuffer.h"
 
 using namespace ainoiceguard;
@@ -280,7 +283,227 @@ static void testDeviceSelect() {
   CHECK(r.index == -1 && !r.fellBack);
 }
 
-int main() {
+/*
+ * Event simulation of the output path: the processing thread writes one
+ * 480-sample frame every 10 ms of *mic* time (through the drift resampler),
+ * the output callback reads 480 samples every 10 ms of *output-device* time,
+ * which runs `ppm` faster (+) or slower (-). Same 4096-sample ring as the
+ * engine. Returns fill/underrun/overflow statistics after `settleS`.
+ */
+struct DriftSim {
+  size_t underrunSamples = 0;   /* after priming and settling */
+  size_t overflowSamples = 0;   /* dropped because the ring was full */
+  double fillMin = 1e9, fillMax = -1e9;
+  double finalPpm = 0;
+};
+
+static DriftSim simulateDrift(double ppm, double seconds, bool control, double settleS = 60.0,
+                              double target = -1, double jitterS = 0.0) {
+  /* Deterministic jitter in [-jitterS, +jitterS] on every event time. */
+  uint32_t lcg = 12345;
+  auto jit = [&]() {
+    lcg = lcg * 1664525u + 1013904223u;
+    return jitterS * (double(lcg >> 8) / double(1u << 24) * 2.0 - 1.0);
+  };
+  RingBuffer ring(4096);
+  DriftResampler rs;
+  rs.reset();
+  DriftController::Config cfg;
+  if (target > 0) cfg.targetFill = target;
+  DriftController dc(cfg);
+  dc.reset();
+  DriftSim r;
+
+  float in[480], out[600], sink[480];
+  for (float& v : in) v = 0.1f;
+  const double prodStep = 0.010;                 /* mic clock */
+  const double consStep = 0.010 / (1.0 + ppm * 1e-6); /* output clock */
+  double np = 0.0, nc = 0.005;                   /* nominal event times */
+  double tp = np, tc = nc;                       /* actual (jittered) times */
+  double tcLast = 0.0;                           /* time of the last consumer read */
+  bool primed = false;
+  double ppmSum = 0;
+  size_t ppmCount = 0;
+
+  while (tp < seconds || tc < seconds) {
+    if (tp <= tc) {
+      const size_t n = rs.process(in, 480, out, 600);
+      const size_t w = ring.write(out, n);
+      if (w < n && tp > settleS) r.overflowSamples += n - w;
+      const double fill = double(ring.available_read());
+      /* The engine uses the nominal block period; drift makes it ~ppm off. */
+      const double level = continuousLevel(fill, tp - tcLast, 0.010, 480.0);
+      rs.setRatio(control ? dc.update(level) : 1.0);
+      if (tp > settleS) {
+        r.fillMin = std::min(r.fillMin, fill);
+        r.fillMax = std::max(r.fillMax, fill);
+        ppmSum += dc.ppm();
+        ppmCount++;
+      }
+      np += prodStep;
+      tp = np + jit();
+    } else {
+      const size_t got = ring.read(sink, 480);
+      if (got > 0) primed = true;
+      if (primed && got < 480 && tc > settleS) r.underrunSamples += 480 - got;
+      tcLast = tc;
+      nc += consStep;
+      tc = nc + jit();
+    }
+  }
+  r.finalPpm = ppmCount ? ppmSum / double(ppmCount) : 0.0;
+  return r;
+}
+
+static void testDriftControl() {
+  for (double ppm : {300.0, -300.0, 1000.0, -1000.0, 0.0}) {
+    const DriftSim on = simulateDrift(ppm, 600.0, true);
+    if (on.underrunSamples || on.overflowSamples) {
+      std::printf("  drift %+.0f ppm: underrun %zu overflow %zu fill [%.0f, %.0f]\n", ppm,
+                  on.underrunSamples, on.overflowSamples, on.fillMin, on.fillMax);
+    }
+    CHECK(on.underrunSamples == 0);
+    CHECK(on.overflowSamples == 0);
+    /* Fill stays near the 960-sample target (+/- one 480 block + margin). */
+    CHECK(on.fillMin >= 960 - 700 && on.fillMax <= 960 + 700);
+    /* The controller learns the drift: output-side faster => consume less. */
+    CHECK(std::fabs(-on.finalPpm - ppm) < std::max(30.0, std::fabs(ppm) * 0.1));
+  }
+  /* Robust to +/-4 ms timing jitter on both sides (2x the worst frame time
+   * measured live in Phase 4a). With the default 960-sample target only:
+   * 720 underran at 4 ms in the sweep (`ng_engine_tests sweep`). */
+  for (double ppm : {300.0, -300.0}) {
+    const DriftSim j = simulateDrift(ppm, 600.0, true, 60.0, -1, 0.004);
+    CHECK(j.underrunSamples == 0 && j.overflowSamples == 0);
+    CHECK(std::fabs(-j.finalPpm - ppm) < 10.0);
+  }
+  /* Without control the same drift breaks the stream (test sensitivity). */
+  CHECK(simulateDrift(300.0, 600.0, false).underrunSamples > 0);
+  CHECK(simulateDrift(-300.0, 600.0, false).overflowSamples > 0);
+}
+
+static void testDriftResampler() {
+  /* Ratio 1: exact passthrough with a constant 2-sample delay. */
+  DriftResampler rs;
+  rs.reset();
+  std::vector<float> in(4800), out;
+  for (size_t i = 0; i < in.size(); i++) in[i] = float(std::sin(0.01 * double(i)));
+  float buf[600];
+  for (size_t off = 0; off < in.size(); off += 480) {
+    const size_t n = rs.process(in.data() + off, 480, buf, 600);
+    out.insert(out.end(), buf, buf + n);
+  }
+  CHECK(out.size() == in.size());
+  float maxErr = 0;
+  for (size_t k = 2; k < out.size(); k++) maxErr = std::max(maxErr, std::fabs(out[k] - in[k - 2]));
+  CHECK(maxErr < 1e-6f);
+
+  /* Ratio 1 + 500 ppm on a 1 kHz tone: still a clean tone at f * ratio. */
+  const double ratio = 1.0005;
+  rs.reset();
+  rs.setRatio(ratio);
+  std::vector<float> tone(48000);
+  for (size_t i = 0; i < tone.size(); i++) tone[i] = float(0.5 * std::sin(2 * 3.14159265358979 * 1000.0 * i / 48000.0));
+  out.clear();
+  for (size_t off = 0; off < tone.size(); off += 480) {
+    const size_t n = rs.process(tone.data() + off, 480, buf, 600);
+    out.insert(out.end(), buf, buf + n);
+  }
+  CHECK(std::fabs(double(out.size()) - 48000.0 / ratio) <= 2.0);
+  /* Least-squares fit of a sine at the expected frequency; residual = error. */
+  const double w = 2 * 3.14159265358979 * 1000.0 * ratio / 48000.0;
+  double ss = 0, cc = 0, sc = 0, ys = 0, yc = 0;
+  for (size_t k = 100; k < out.size() - 100; k++) {
+    const double s = std::sin(w * k), c = std::cos(w * k), y = out[k];
+    ss += s * s; cc += c * c; sc += s * c; ys += y * s; yc += y * c;
+  }
+  const double det = ss * cc - sc * sc;
+  const double a = (ys * cc - yc * sc) / det, b = (yc * ss - ys * sc) / det;
+  double sig = 0, err = 0;
+  for (size_t k = 100; k < out.size() - 100; k++) {
+    const double fit = a * std::sin(w * k) + b * std::cos(w * k);
+    sig += fit * fit;
+    err += (out[k] - fit) * (out[k] - fit);
+  }
+  const double snrDb = 10 * std::log10(sig / std::max(err, 1e-30));
+  if (snrDb < 60) std::printf("  resampler SNR %.1f dB\n", snrDb);
+  CHECK(snrDb >= 60.0);
+}
+
+static void testLoopbackMath() {
+  using namespace loopback;
+  const double sr = 48000.0;
+  const auto burst = makeBurst(sr);
+  CHECK(burst.size() == 48);
+
+  /*
+   * Synthetic run: bursts every 250 ms on the "output"; the "input" receives
+   * them 37.5 ms later, attenuated, with noise, and its stream started 20 ms
+   * after the output's. Timestamps come in 480-sample blocks, as from PA.
+   */
+  const size_t n = size_t(sr * 3);
+  const double inStart = 0.020, latency = 0.0375;
+  std::vector<float> rec(n, 0.0f);
+  std::vector<double> played;
+  uint32_t lcg = 1;
+  for (size_t i = 0; i < n; i++) {
+    lcg = lcg * 1664525u + 1013904223u;
+    rec[i] = 0.002f * (float(lcg >> 8) / float(1u << 24) - 0.5f); /* noise floor */
+  }
+  for (int k = 0; k < 10; k++) {
+    const double tPlay = 0.1 + 0.25 * k;
+    played.push_back(tPlay);
+    const size_t at = size_t((tPlay + latency - inStart) * sr);
+    for (size_t i = 0; i < burst.size(); i++) rec[at + i] += 0.3f * burst[i];
+  }
+  std::vector<Stamp> inStamps;
+  for (size_t s = 0; s < n; s += 480) inStamps.push_back({s, inStart + double(s) / sr});
+
+  const auto onsets = detectOnsets(rec, 0.02f, size_t(sr * 0.05));
+  CHECK(onsets.size() == 10);
+  std::vector<double> recTimes;
+  for (size_t o : onsets) recTimes.push_back(timeOf(inStamps, o, sr));
+  const auto lat = matchLatencies(played, recTimes, 0.5);
+  CHECK(lat.size() == 10);
+  /* Onset is detected a few samples into the burst's rising window. */
+  CHECK(std::fabs(median(lat) - latency) < 0.0005);
+
+  /* Clock estimate: a stream that delivers 48000 * (1 + 120e-6) frames/s. */
+  std::vector<Stamp> fast;
+  for (int b = 0; b <= 6000; b++) fast.push_back({size_t(b) * 480, double(b) * 480.0 / (sr * (1 + 120e-6))});
+  CHECK(std::fabs(clockPpm(fast, sr) - 120.0) < 0.5);
+  CHECK(clockPpm({}, sr) == 0.0);
+
+  /* 10 s with +/-2 ms callback-time jitter: still within 20 ppm. */
+  std::vector<Stamp> jittery;
+  uint32_t j = 99;
+  for (int b = 0; b <= 1000; b++) {
+    j = j * 1664525u + 1013904223u;
+    const double jit = 0.002 * (double(j >> 8) / double(1u << 24) * 2 - 1);
+    jittery.push_back({size_t(b) * 480, double(b) * 480.0 / (sr * (1 - 80e-6)) + jit});
+  }
+  const double est = clockPpm(jittery, sr);
+  if (std::fabs(est - -80.0) >= 20.0) std::printf("  jittery clock estimate %.1f ppm\n", est);
+  CHECK(std::fabs(est - -80.0) < 20.0);
+}
+
+int main(int argc, char** argv) {
+  /* `ng_engine_tests sweep`: print drift behaviour for a range of targets. */
+  if (argc > 1 && std::string(argv[1]) == "sweep") {
+    for (double jitterMs : {0.0, 2.0, 4.0}) {
+      for (double target : {720.0, 960.0}) {
+        for (double ppm : {1000.0, 300.0, 0.0, -300.0, -1000.0}) {
+          const DriftSim s = simulateDrift(ppm, 600.0, true, 60.0, target, jitterMs / 1000.0);
+          std::printf("jitter %.0f ms target %4.0f drift %+5.0f ppm: fill [%4.0f, %4.0f] underrun %4zu overflow %4zu learned %+7.1f ppm\n",
+                      jitterMs, target, ppm, s.fillMin, s.fillMax, s.underrunSamples, s.overflowSamples, -s.finalPpm);
+        }
+      }
+    }
+    return 0;
+  }
+  testLoopbackMath();
+  testDriftResampler();
+  testDriftControl();
   testDeviceSelect();
   testLimiter();
   testAgc();
