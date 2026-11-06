@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 #include "portaudio.h"
 
@@ -65,28 +66,79 @@ AudioEngine::~AudioEngine() { stop(); }
 
 /* ───────────────────── Device Enumeration ───────────────────── */
 
-std::vector<DeviceInfo> AudioEngine::enumerateDevices() {
+/*
+ * Pa_Initialize/Pa_Terminate and the device list are not thread-safe. They
+ * are touched from the N-API thread (getDevices, getMetrics) and from the
+ * processing thread (automatic restart), so all of it is serialised here.
+ * Never taken in the real-time callbacks.
+ */
+static std::mutex& paMutex() {
+  static std::mutex m;
+  return m;
+}
+
+/* Preferred host API name; PortAudio must be initialised. */
+static std::string preferredHostApiLocked() {
+#ifdef _WIN32
+  /* WASAPI: lower latency than MME (Phase 3: ~9 ms) and full device names. */
+  PaHostApiIndex wasapi = Pa_HostApiTypeIdToHostApiIndex(paWASAPI);
+  if (wasapi >= 0) {
+    const PaHostApiInfo* h = Pa_GetHostApiInfo(wasapi);
+    if (h && h->name && h->deviceCount > 0) return h->name;
+  }
+#endif
+  const PaHostApiInfo* h = Pa_GetHostApiInfo(Pa_GetDefaultHostApi());
+  return h && h->name ? h->name : "";
+}
+
+/* Snapshot of all devices; PortAudio must be initialised. */
+static std::vector<DeviceInfo> collectDevicesLocked() {
   std::vector<DeviceInfo> devices;
-
-  PaError err = Pa_Initialize();
-  if (err != paNoError) return devices;
-
-  int numDevices = Pa_GetDeviceCount();
+  const std::string preferred = preferredHostApiLocked();
+  const int numDevices = Pa_GetDeviceCount();
   for (int i = 0; i < numDevices; i++) {
     const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
     if (!info) continue;
+    const PaHostApiInfo* h = Pa_GetHostApiInfo(info->hostApi);
 
     DeviceInfo d;
     d.index = i;
     d.name = info->name ? info->name : "(unknown)";
+    d.hostApi = h && h->name ? h->name : "";
     d.maxInputChannels = info->maxInputChannels;
     d.maxOutputChannels = info->maxOutputChannels;
+    d.isHostDefaultInput = h && h->defaultInputDevice == i;
+    d.isHostDefaultOutput = h && h->defaultOutputDevice == i;
     d.defaultSampleRate = info->defaultSampleRate;
+    d.preferredHostApi = d.hostApi == preferred;
     devices.push_back(d);
   }
+  return devices;
+}
 
+std::vector<DeviceInfo> AudioEngine::enumerateDevices() {
+  std::lock_guard<std::mutex> lock(paMutex());
+  if (Pa_Initialize() != paNoError) return {};
+  auto devices = collectDevicesLocked();
   Pa_Terminate();
   return devices;
+}
+
+std::string AudioEngine::preferredHostApi() {
+  std::lock_guard<std::mutex> lock(paMutex());
+  if (Pa_Initialize() != paNoError) return "";
+  auto name = preferredHostApiLocked();
+  Pa_Terminate();
+  return name;
+}
+
+bool AudioEngine::openedDevices(OpenedDevice& in, OpenedDevice& out) const {
+  /* try_lock: never stall the UI behind a restart (which holds the mutex). */
+  std::unique_lock<std::mutex> lock(paMutex(), std::try_to_lock);
+  if (!lock.owns_lock()) return false;
+  in = openedIn_;
+  out = openedOut_;
+  return true;
 }
 
 /* ───────────────────── Start / Stop ───────────────────── */
@@ -101,6 +153,11 @@ std::string AudioEngine::start(const AudioConfig& config) {
   /* Fresh counters for this session (no audio thread is running yet). */
   stats_.reset();
   outputPrimed_.store(false, std::memory_order_relaxed);
+  forceDeviceLoss_.store(false, std::memory_order_relaxed);
+  inOutage_ = false;
+
+  /* Serialise with getDevices()/getMetrics() device lookups (see paMutex). */
+  std::lock_guard<std::mutex> lock(paMutex());
 
   /* Initialize PortAudio. */
   PaError err = Pa_Initialize();
@@ -135,7 +192,7 @@ std::string AudioEngine::start(const AudioConfig& config) {
     return std::string("Failed to start capture stream: ") + Pa_GetErrorText(err);
   }
 
-  /* Output stream is optional (outputDeviceIndex == -2 => mute). */
+  /* Output stream is optional (config.output == none => mute). */
   if (outputStream_) {
     err = Pa_StartStream(outputStream_);
     if (err != paNoError) {
@@ -165,10 +222,15 @@ void AudioEngine::stop() {
     processingThread_.join();
   }
 
+  /* The processing thread (and any restart) has exited. */
+  std::lock_guard<std::mutex> lock(paMutex());
+
   /* Stop and close streams. */
   if (captureStream_) Pa_StopStream(captureStream_);
   if (outputStream_) Pa_StopStream(outputStream_);
   closeStreams();
+  openedIn_ = {};
+  openedOut_ = {};
 
   /* Cleanup. */
   rnnoise_.destroy();
@@ -183,16 +245,43 @@ void AudioEngine::stop() {
 std::string AudioEngine::openStreams() {
   PaError err;
 
-  /* Resolve device indices. -1 means use default. */
-  int inputIdx = config_.inputDeviceIndex;
-  int outputIdx = config_.outputDeviceIndex;
+  /*
+   * Resolve devices by identity against the current device list (never a
+   * cached index): after a restart PortAudio has been re-initialised, so the
+   * list reflects devices that were added or removed meanwhile.
+   */
+  const auto devices = collectDevicesLocked();
+  const std::string preferred = preferredHostApiLocked();
+  const bool outputEnabled = config_.output.kind != DeviceSpec::Kind::None;
+  const Resolved rin = resolveDevice(devices, config_.input, true, preferred);
+  const Resolved rout = outputEnabled ? resolveDevice(devices, config_.output, false, preferred)
+                                      : Resolved{};
+  const int inputIdx = rin.index;
+  const int outputIdx = rout.index;
 
-  const bool outputEnabled = (outputIdx != -2);
-  if (inputIdx < 0) inputIdx = Pa_GetDefaultInputDevice();
-  if (outputEnabled && outputIdx < 0) outputIdx = Pa_GetDefaultOutputDevice();
+  if (inputIdx < 0) return "No input device available";
+  if (outputEnabled && outputIdx < 0) return "No output device available";
 
-  if (inputIdx == paNoDevice) return "No input device available";
-  if (outputEnabled && outputIdx == paNoDevice) return "No output device available";
+  auto describe = [&](int idx, OpenedDevice& o) {
+    o = {};
+    for (const auto& d : devices) {
+      if (d.index == idx) {
+        o.id = deviceId(d);
+        o.name = d.name;
+        o.hostApi = d.hostApi;
+      }
+    }
+  };
+  describe(inputIdx, openedIn_);
+  if (outputEnabled) describe(outputIdx, openedOut_); else openedOut_ = {};
+
+  if (statusCallback_ && (rin.fellBack || rout.fellBack)) {
+    std::string msg = "Selected ";
+    msg += rin.fellBack ? "microphone" : "output";
+    if (rin.fellBack && rout.fellBack) msg = "Selected microphone and output";
+    msg += " not found; using the default device instead";
+    statusCallback_("fallback", msg);
+  }
 
   /* ── Capture stream parameters ── */
   PaStreamParameters inputParams;
@@ -216,42 +305,37 @@ std::string AudioEngine::openStreams() {
 
 #ifdef _WIN32
   /*
-   * WASAPI-specific: attempt exclusive mode for lowest latency.
-   * In exclusive mode, we get direct access to the hardware buffer.
-   * If the device is busy, PortAudio falls back to shared mode.
+   * WASAPI stream options, only for devices that ARE on WASAPI (attaching
+   * WASAPI info to an MME device made every open fail once and retry).
+   *   shared (default): AutoConvert, so devices whose mix format is not
+   *     48 kHz mono float (e.g. 44.1 kHz) are converted by Windows instead of
+   *     failing to open.
+   *   exclusive (opt-in): lowest latency, but locks the device; falls back
+   *     to shared below if it cannot be opened.
    */
   PaWasapiStreamInfo wasapiInputInfo;
   PaWasapiStreamInfo wasapiOutputInfo;
-
-  if (config_.tryExclusiveMode) {
-    const PaHostApiInfo* wasapiInfo = nullptr;
-    for (PaHostApiIndex i = 0; i < Pa_GetHostApiCount(); i++) {
-      const PaHostApiInfo* api = Pa_GetHostApiInfo(i);
-      if (api && api->type == paWASAPI) {
-        wasapiInfo = api;
-        break;
-      }
-    }
-
-    if (wasapiInfo) {
-      memset(&wasapiInputInfo, 0, sizeof(wasapiInputInfo));
-      wasapiInputInfo.size = sizeof(PaWasapiStreamInfo);
-      wasapiInputInfo.hostApiType = paWASAPI;
-      wasapiInputInfo.version = 1;
-      wasapiInputInfo.flags = paWinWasapiExclusive | paWinWasapiThreadPriority;
-      wasapiInputInfo.threadPriority = eThreadPriorityProAudio;
-      inputParams.hostApiSpecificStreamInfo = &wasapiInputInfo;
-
-      if (outputEnabled) {
-        memset(&wasapiOutputInfo, 0, sizeof(wasapiOutputInfo));
-        wasapiOutputInfo.size = sizeof(PaWasapiStreamInfo);
-        wasapiOutputInfo.hostApiType = paWASAPI;
-        wasapiOutputInfo.version = 1;
-        wasapiOutputInfo.flags = paWinWasapiExclusive | paWinWasapiThreadPriority;
-        wasapiOutputInfo.threadPriority = eThreadPriorityProAudio;
-        outputParams.hostApiSpecificStreamInfo = &wasapiOutputInfo;
-      }
-    }
+  auto isWasapi = [](int idx) {
+    const PaDeviceInfo* d = Pa_GetDeviceInfo(idx);
+    const PaHostApiInfo* h = d ? Pa_GetHostApiInfo(d->hostApi) : nullptr;
+    return h && h->type == paWASAPI;
+  };
+  auto fill = [&](PaWasapiStreamInfo& w, bool exclusive) {
+    memset(&w, 0, sizeof(w));
+    w.size = sizeof(PaWasapiStreamInfo);
+    w.hostApiType = paWASAPI;
+    w.version = 1;
+    w.flags = exclusive ? (paWinWasapiExclusive | paWinWasapiThreadPriority)
+                        : paWinWasapiAutoConvert;
+    w.threadPriority = eThreadPriorityProAudio;
+  };
+  if (isWasapi(inputIdx)) {
+    fill(wasapiInputInfo, config_.tryExclusiveMode);
+    inputParams.hostApiSpecificStreamInfo = &wasapiInputInfo;
+  }
+  if (outputEnabled && isWasapi(outputIdx)) {
+    fill(wasapiOutputInfo, config_.tryExclusiveMode);
+    outputParams.hostApiSpecificStreamInfo = &wasapiOutputInfo;
   }
 #endif
 
@@ -264,15 +348,17 @@ std::string AudioEngine::openStreams() {
                       config_.sampleRate, config_.framesPerBuffer,
                       paClipOff,
                       captureCallback, this);
+  bool inputExclusive = err == paNoError && config_.tryExclusiveMode &&
+                        inputParams.hostApiSpecificStreamInfo != nullptr;
 
   if (err != paNoError) {
 #ifdef _WIN32
     /*
-     * Exclusive mode often fails if another app has the device.
-     * Retry without exclusive mode (shared/loopback).
+     * Exclusive mode often fails if another app has the device (or its
+     * format is not supported). Retry in WASAPI shared mode.
      */
-    if (config_.tryExclusiveMode) {
-      inputParams.hostApiSpecificStreamInfo = nullptr;
+    if (config_.tryExclusiveMode && inputParams.hostApiSpecificStreamInfo) {
+      fill(wasapiInputInfo, false);
       err = Pa_OpenStream(&captureStream_, &inputParams, nullptr,
                           config_.sampleRate, config_.framesPerBuffer,
                           paClipOff, captureCallback, this);
@@ -284,9 +370,6 @@ std::string AudioEngine::openStreams() {
     }
   }
 
-  /* WASAPI info still attached => the exclusive-mode open succeeded. */
-  const bool inputExclusive = inputParams.hostApiSpecificStreamInfo != nullptr;
-
   if (!outputEnabled) {
     outputStream_ = nullptr;
     captureStreamSnapshot(inputIdx, -1, inputExclusive, false);
@@ -297,11 +380,13 @@ std::string AudioEngine::openStreams() {
                       config_.sampleRate, config_.framesPerBuffer,
                       paClipOff,
                       outputCallback, this);
+  bool outputExclusive = err == paNoError && config_.tryExclusiveMode &&
+                         outputParams.hostApiSpecificStreamInfo != nullptr;
 
   if (err != paNoError) {
 #ifdef _WIN32
-    if (config_.tryExclusiveMode) {
-      outputParams.hostApiSpecificStreamInfo = nullptr;
+    if (config_.tryExclusiveMode && outputParams.hostApiSpecificStreamInfo) {
+      fill(wasapiOutputInfo, false);
       err = Pa_OpenStream(&outputStream_, nullptr, &outputParams,
                           config_.sampleRate, config_.framesPerBuffer,
                           paClipOff, outputCallback, this);
@@ -315,8 +400,7 @@ std::string AudioEngine::openStreams() {
     }
   }
 
-  captureStreamSnapshot(inputIdx, outputIdx, inputExclusive,
-                        outputParams.hostApiSpecificStreamInfo != nullptr);
+  captureStreamSnapshot(inputIdx, outputIdx, inputExclusive, outputExclusive);
   return "";  /* Success */
 }
 
@@ -531,10 +615,10 @@ bool AudioEngine::deviceLost() {
   if (now - wdLastCheckMs_ < kWatchdogIntervalMs) return false;
   wdLastCheckMs_ = now;
 
-  bool lost = false;
+  bool lost = forceDeviceLoss_.exchange(false, std::memory_order_relaxed); /* test hook */
   /* A stream PortAudio stopped on its own (host error, device invalidated). */
   if (!captureStream_ || Pa_IsStreamActive(captureStream_) != 1) lost = true;
-  if (!lost && config_.outputDeviceIndex != -2 &&
+  if (!lost && config_.output.kind != DeviceSpec::Kind::None &&
       (!outputStream_ || Pa_IsStreamActive(outputStream_) != 1)) {
     lost = true;
   }
@@ -558,8 +642,22 @@ bool AudioEngine::deviceLost() {
 /* ───────────────────── Auto-Restart ───────────────────── */
 
 void AudioEngine::attemptRestart() {
-  if (statusCallback_) {
-    statusCallback_("Device issue detected, attempting restart...");
+  /* One "device-lost" event per outage, not one per retry cycle. */
+  if (!inOutage_) {
+    inOutage_ = true;
+    if (statusCallback_) {
+      statusCallback_("device-lost", "Audio device lost; trying to reconnect...");
+    }
+  }
+
+  /* Stop the failed streams right away, not after the first backoff: a
+   * stream that is still delivering audio would otherwise overflow the
+   * capture ring while this thread sleeps (counted as dropped samples). */
+  {
+    std::lock_guard<std::mutex> lock(paMutex());
+    if (captureStream_) Pa_StopStream(captureStream_);
+    if (outputStream_) Pa_StopStream(outputStream_);
+    closeStreams();
   }
 
   for (int attempt = 0; attempt < kMaxRestartAttempts; attempt++) {
@@ -569,12 +667,23 @@ void AudioEngine::attemptRestart() {
 
     if (!running_.load(std::memory_order_acquire)) return;
 
+    std::lock_guard<std::mutex> lock(paMutex());
+
     /* Stop current streams. */
     if (captureStream_) Pa_StopStream(captureStream_);
     if (outputStream_) Pa_StopStream(outputStream_);
     closeStreams();
 
-    /* Try to reopen. */
+    /*
+     * Re-initialise PortAudio so its device list is current: it is cached
+     * until Pa_Terminate, so without this a replugged (or newly added)
+     * device would never be found and indices could be stale. All streams
+     * are closed here, and the mutex keeps getDevices() out meanwhile.
+     */
+    Pa_Terminate();
+    if (Pa_Initialize() != paNoError) continue;
+
+    /* Try to reopen (devices are resolved by identity again). */
     std::string err = openStreams();
     if (!err.empty()) continue;
 
@@ -596,8 +705,9 @@ void AudioEngine::attemptRestart() {
     stats_.restarts.store(stats_.restarts.load(std::memory_order_relaxed) + 1,
                           std::memory_order_relaxed);
     resetWatchdog();
+    inOutage_ = false;
     if (statusCallback_) {
-      statusCallback_("Audio engine restarted successfully");
+      statusCallback_("restarted", "Audio reconnected: " + openedIn_.name);
     }
     return;
   }
@@ -605,8 +715,10 @@ void AudioEngine::attemptRestart() {
   stats_.restartFailures.store(stats_.restartFailures.load(std::memory_order_relaxed) + 1,
                                std::memory_order_relaxed);
   resetWatchdog();
-  if (statusCallback_) {
-    statusCallback_("Failed to restart audio engine after multiple attempts");
+  /* Report the first failed round only; retries continue silently. */
+  if (statusCallback_ && stats_.restartFailures.load(std::memory_order_relaxed) == 1) {
+    statusCallback_("restart-failed",
+                    "Could not reopen the audio device; will keep retrying");
   }
 }
 
