@@ -13,6 +13,7 @@ const path = require("path");
 const fs = require("fs");
 const { createTray, destroyTray, updateTrayMenu } = require("./tray");
 const { summarizeSession, formatSessionLine } = require("./session-stats");
+const { loadSettings, saveSettings } = require("./settings");
 
 /* ── Load native addon ─────────────────────────────────────────────────────── */
 let addon;
@@ -48,6 +49,22 @@ try {
 /* ── State ─────────────────────────────────────────────────────────────────── */
 let mainWindow = null;
 let sessionStartedAt = null;
+
+/* ── Settings ──────────────────────────────────────────────────────────────── */
+
+function settingsFile() {
+  return path.join(app.getPath("userData"), "settings.json");
+}
+
+/* ── Engine status events (device lost / restarted / fallback) ─────────────── */
+
+/* Registered once, before any start(); events arrive from the audio thread. */
+addon.onStatus((type, message) => {
+  console.log(`[engine] ${type}: ${message}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("audio:status", { type, message });
+  }
+});
 
 /* ── Engine session stats ──────────────────────────────────────────────────── */
 
@@ -96,6 +113,14 @@ function stopEngineAndLog(reason) {
 /* ── App Lifecycle ─────────────────────────────────────────────────────────── */
 
 app.whenReady().then(() => {
+  /* Restore saved processing settings before anything starts. */
+  const s = loadSettings(settingsFile());
+  try {
+    addon.setNoiseLevel(s.level);
+    addon.setVadThreshold(s.vadThreshold);
+  } catch (err) {
+    console.error("Could not apply saved settings:", err.message);
+  }
   createMainWindow();
   createTray(mainWindow);
 });
@@ -175,14 +200,17 @@ ipcMain.handle("audio:get-devices", () => {
 
 /**
  * audio:start -> { success: boolean, error?: string }
- * @param {number} inputIdx  - Input device index (-1 for default)
- * @param {number} outputIdx - Output device index (-1 for default)
+ * @param {string} inputId  - device id from getDevices(), "" = system default
+ * @param {string} outputId - device id, "" = system default, "mute" = no output
+ * (Legacy numeric indices are still accepted by the addon.)
  */
-ipcMain.handle("audio:start", (_event, inputIdx, outputIdx) => {
+ipcMain.handle("audio:start", (_event, inputId, outputId) => {
   try {
+    const { exclusive } = loadSettings(settingsFile());
     const errMsg = addon.start(
-      inputIdx !== undefined ? inputIdx : -1,
-      outputIdx !== undefined ? outputIdx : -1,
+      inputId !== undefined ? inputId : "",
+      outputId !== undefined ? outputId : "",
+      { exclusive },
     );
     if (errMsg && errMsg.length > 0) {
       updateTrayMenu(false);
@@ -268,6 +296,21 @@ ipcMain.handle("audio:set-vad-threshold", (_event, threshold) => {
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+/**
+ * settings:get -> settings object (see electron/settings.js)
+ * settings:set(patch) -> merged settings, persisted atomically
+ */
+ipcMain.handle("settings:get", () => loadSettings(settingsFile()));
+
+ipcMain.handle("settings:set", (_event, patch) => {
+  try {
+    return saveSettings(settingsFile(), patch);
+  } catch (err) {
+    console.error("Could not save settings:", err.message);
+    return loadSettings(settingsFile());
   }
 });
 

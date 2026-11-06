@@ -42,6 +42,10 @@ const vbCableRefresh = document.getElementById("vbCableRefresh");
 let isRunning = false;
 let metricsInterval = null;
 let noInputPollCount = 0;
+let settings = null; /* persisted settings (see electron/settings.js) */
+
+const MUTE = "mute"; /* output value: no output */
+const choice = window.deviceChoice;
 
 /* ── Utility Functions ───────────────────────────────────────────────────── */
 
@@ -79,9 +83,32 @@ if (!bridge) {
 
 async function init() {
   if (!bridge) return;
+  try {
+    settings = await bridge.getSettings();
+  } catch (err) {
+    settings = null;
+  }
+  applySavedSliders();
+  if (bridge.onStatus) bridge.onStatus(handleEngineStatus);
   await loadDevices();
   await syncStatus();
   setInterval(syncStatus, 2000);
+}
+
+/** Restore saved suppression level / VAD threshold into the sliders. */
+function applySavedSliders() {
+  if (!settings) return;
+  const level = Math.round(settings.level * 100);
+  levelSlider.value = level;
+  levelValue.textContent = level + "%";
+  const vad = Math.round(settings.vadThreshold * 100);
+  vadThreshSlider.value = vad;
+  vadThreshValue.textContent = vad + "%";
+}
+
+function saveSettings(patch) {
+  if (!bridge || !bridge.setSettings) return;
+  bridge.setSettings(patch).then((s) => { settings = s; }).catch(() => {});
 }
 
 async function loadDevices() {
@@ -93,25 +120,41 @@ async function loadDevices() {
       return;
     }
 
-    populateSelect(inputSelect, devices.inputs, "input");
-    populateSelect(outputSelect, devices.outputs, "output");
-    detectVBCable(devices.outputs);
-    hideError();
+    const inputs = choice.visibleDevices(devices.inputs);
+    const outputs = choice.visibleDevices(devices.outputs);
+    populateSelect(inputSelect, inputs, "input");
+    populateSelect(outputSelect, outputs, "output");
+
+    /* Restore saved devices by id; on first run suggest VB-Cable as output. */
+    const cableId = detectVBCable(outputs);
+    const inSel = choice.chooseSelection(inputs.map((d) => d.id), settings ? settings.inputId : "", null);
+    const outSel = choice.chooseSelection(outputs.map((d) => d.id), settings ? settings.outputId : null, cableId);
+    inputSelect.value = inSel.value;
+    outputSelect.value = outSel.value;
+
+    const missing = [];
+    if (inSel.missing) missing.push("microphone “" + choice.nameFromId(settings.inputId) + "”");
+    if (outSel.missing) missing.push("output “" + choice.nameFromId(settings.outputId) + "”");
+    if (missing.length) {
+      showError("Saved " + missing.join(" and ") + " not connected — using System Default.");
+    } else {
+      hideError();
+    }
   } catch (err) {
     showError("Failed to load audio devices: " + err.message);
   }
 }
 
 function populateSelect(select, devices, type) {
-  select.innerHTML = '<option value="-1">System Default</option>';
+  select.innerHTML = '<option value="">System Default</option>';
 
   if (type === "output") {
-    select.innerHTML += '<option value="-2">No Output (Mute)</option>';
+    select.innerHTML += '<option value="' + MUTE + '">No Output (Mute)</option>';
   }
 
   for (const d of devices) {
     const opt = document.createElement("option");
-    opt.value = d.index;
+    opt.value = d.id; /* stable id; PortAudio indices change with devices */
     opt.textContent = d.name;
 
     if (d.name.toLowerCase().includes("cable")) {
@@ -119,6 +162,23 @@ function populateSelect(select, devices, type) {
     }
 
     select.appendChild(opt);
+  }
+}
+
+/** Engine status events from the audio thread (via main process). */
+function handleEngineStatus(ev) {
+  if (!ev || !ev.type) return;
+  if (ev.type === "device-lost") {
+    statusText.textContent = "Reconnecting...";
+    showError(ev.message);
+  } else if (ev.type === "restarted") {
+    statusText.textContent = "Active";
+    hideError();
+  } else if (ev.type === "restart-failed") {
+    statusText.textContent = "Device lost";
+    showError(ev.message);
+  } else if (ev.type === "fallback") {
+    showError(ev.message);
   }
 }
 
@@ -142,6 +202,9 @@ toggleBtn.addEventListener("click", async () => {
 
   toggleBtn.disabled = true;
 
+  /* Let any device-change restart finish first (see restartIfRunning). */
+  await restartQueue.catch(() => {});
+
   try {
     if (isRunning) {
       const result = await bridge.stop();
@@ -151,11 +214,8 @@ toggleBtn.addEventListener("click", async () => {
         showError(result.error || "Failed to stop");
       }
     } else {
-      const inputIdx = parseInt(inputSelect.value, 10);
-      const outputIdx = parseInt(outputSelect.value, 10);
-
       statusText.textContent = "Starting...";
-      const result = await bridge.start(inputIdx, outputIdx);
+      const result = await bridge.start(inputSelect.value, outputSelect.value);
 
       if (result.success) {
         updateUI(true);
@@ -181,6 +241,7 @@ levelSlider.addEventListener("input", () => {
 
 levelSlider.addEventListener("change", async () => {
   const level = parseInt(levelSlider.value, 10) / 100.0;
+  saveSettings({ level });
   try {
     if (bridge) await bridge.setLevel(level);
   } catch (err) {
@@ -197,6 +258,7 @@ vadThreshSlider.addEventListener("input", () => {
 
 vadThreshSlider.addEventListener("change", async () => {
   const threshold = parseInt(vadThreshSlider.value, 10) / 100.0;
+  saveSettings({ vadThreshold: threshold });
   try {
     if (bridge) await bridge.setVadThreshold(threshold);
   } catch (err) {
@@ -206,10 +268,29 @@ vadThreshSlider.addEventListener("change", async () => {
 
 /* ── Device selection change while running -> restart ────────────────────── */
 
-inputSelect.addEventListener("change", restartIfRunning);
-outputSelect.addEventListener("change", restartIfRunning);
+inputSelect.addEventListener("change", () => {
+  saveSettings({ inputId: inputSelect.value });
+  restartIfRunning();
+});
+outputSelect.addEventListener("change", () => {
+  saveSettings({ outputId: outputSelect.value });
+  restartIfRunning();
+});
 
-async function restartIfRunning() {
+/*
+ * Device changes while running restart the engine. Restarts are serialised:
+ * overlapping change events (e.g. arrow-keying through a select) used to run
+ * stop/start pairs concurrently and fail with "Engine already running".
+ * Each queued restart uses the selection current at the time it runs.
+ */
+let restartQueue = Promise.resolve();
+
+function restartIfRunning() {
+  restartQueue = restartQueue.then(doRestart, doRestart);
+  return restartQueue;
+}
+
+async function doRestart() {
   if (!isRunning || !bridge) return;
 
   try {
@@ -218,9 +299,7 @@ async function restartIfRunning() {
 
     await bridge.stop();
 
-    const inputIdx = parseInt(inputSelect.value, 10);
-    const outputIdx = parseInt(outputSelect.value, 10);
-    const result = await bridge.start(inputIdx, outputIdx);
+    const result = await bridge.start(inputSelect.value, outputSelect.value);
 
     if (result.success) {
       updateUI(true);
@@ -270,8 +349,16 @@ function startMetricsPolling() {
         ? (gateGain * 100).toFixed(0) + "%"
         : "--";
 
+      /* Live end-to-end latency estimate (device + rings + RNNoise frame). */
+      const lat = m.engine && m.engine.latency ? Number(m.engine.latency.estimatedTotalMs) : NaN;
+      if (outputSelect.value === MUTE) {
+        latencyText.textContent = "Muted";
+      } else if (Number.isFinite(lat) && lat > 0) {
+        latencyText.textContent = "~" + Math.round(lat) + " ms";
+      }
+
       if (meterHint) {
-        const outputIsMute = parseInt(outputSelect.value, 10) === -2;
+        const outputIsMute = outputSelect.value === MUTE;
         if (inputRms <= 0.001) {
           noInputPollCount++;
           if (noInputPollCount >= 20) {
@@ -333,11 +420,10 @@ function updateUI(running, level) {
 
   if (!running) {
     latencyText.textContent = "-- ms";
-  } else if (parseInt(outputSelect.value, 10) === -2) {
+  } else if (outputSelect.value === MUTE) {
     latencyText.textContent = "Muted";
-  } else {
-    latencyText.textContent = "~12 ms";
   }
+  /* While running, the live estimate is filled in by the metrics poll. */
 
   if (level !== undefined) {
     const pct = Math.round(level * 100);
@@ -375,12 +461,13 @@ function detectVBCable(outputDevices) {
   );
 
   if (cableDevice) {
-    outputSelect.value = String(cableDevice.index);
     if (vbCableFound) vbCableFound.classList.remove("hidden");
     if (vbCableMissing) vbCableMissing.classList.add("hidden");
   } else {
     if (vbCableMissing) vbCableMissing.classList.remove("hidden");
   }
+  /* Only a suggestion: loadDevices() applies it if no output was ever saved. */
+  return cableDevice ? cableDevice.id : null;
 }
 
 /* Open VB-Audio download page. */

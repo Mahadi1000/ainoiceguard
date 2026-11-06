@@ -75,14 +75,14 @@
         <div class="field">
           <label class="field-label">Microphone</label>
           <select id="inputSelect" class="select">
-            <option value="-1">System Default</option>
+            <option value="">System Default</option>
           </select>
         </div>
         <div class="divider"></div>
         <div class="field">
           <label class="field-label">Output</label>
           <select id="outputSelect" class="select">
-            <option value="-1">System Default</option>
+            <option value="">System Default</option>
           </select>
           <p class="field-hint">No Output (Mute) = no sound. Choose Speakers or CABLE to hear.</p>
         </div>
@@ -180,6 +180,7 @@
       <!-- Error bar -->
       <div id="errorBar" class="error-bar hidden"></div>
     </div>
+    <script src="device-choice.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

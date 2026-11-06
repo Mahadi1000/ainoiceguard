@@ -25,6 +25,7 @@
 #include <thread>
 #include <vector>
 
+#include "device_select.h"
 #include "engine_stats.h"
 #include "ringbuffer.h"
 #include "rnnoise_wrapper.h"
@@ -38,21 +39,23 @@ typedef unsigned long PaStreamCallbackFlags;
 namespace ainoiceguard {
 
 /** Audio device info exposed to JavaScript. */
-struct DeviceInfo {
-  int index;
-  std::string name;
-  int maxInputChannels;
-  int maxOutputChannels;
-  double defaultSampleRate;
+struct DeviceInfo : DeviceEntry {
+  double defaultSampleRate = 0.0;
+  bool preferredHostApi = false;  /* on the host API the engine prefers (WASAPI on Windows) */
 };
 
 /** Configuration for the audio engine. */
 struct AudioConfig {
-  int inputDeviceIndex = -1;   /* -1 = default input */
-  int outputDeviceIndex = -1;  /* -1 = default output, -2 = disable output (mute) */
+  DeviceSpec input = DeviceSpec::def();   /* default = preferred host API's default */
+  DeviceSpec output = DeviceSpec::def();  /* DeviceSpec::none() = output muted */
   double sampleRate = 48000.0;
   unsigned long framesPerBuffer = 480;  /* 10ms @ 48kHz = RNNoise frame size */
-  bool tryExclusiveMode = true;
+  /*
+   * WASAPI exclusive mode is opt-in. Phase 3 measured that it was never
+   * obtained on the test machine (silent fallback), and when it does succeed
+   * it locks the microphone away from every other application.
+   */
+  bool tryExclusiveMode = false;
 };
 
 /** What the engine actually opened (resolved after defaults and fallbacks). */
@@ -69,10 +72,12 @@ struct StreamSnapshot {
 };
 
 /**
- * Callback for engine status changes (e.g., device disconnected, restarted).
+ * Callback for engine status changes. `type` is one of:
+ *   "device-lost", "restarted", "restart-failed", "fallback"
  * Called from the processing thread -- keep it lightweight.
  */
-using StatusCallback = std::function<void(const std::string& status)>;
+using StatusCallback =
+    std::function<void(const std::string& type, const std::string& message)>;
 
 class AudioEngine {
  public:
@@ -82,8 +87,24 @@ class AudioEngine {
   AudioEngine(const AudioEngine&) = delete;
   AudioEngine& operator=(const AudioEngine&) = delete;
 
-  /** Enumerate all available audio devices. Safe to call anytime. */
+  /**
+   * Enumerate all available audio devices (fresh list when the engine is
+   * stopped; while running, PortAudio keeps the list from the last open).
+   * Safe to call anytime; serialised with PortAudio init/terminate.
+   */
   static std::vector<DeviceInfo> enumerateDevices();
+
+  /** Host API the engine prefers ("Windows WASAPI" on Windows, else PA default). */
+  static std::string preferredHostApi();
+
+  /** Test hook: make the watchdog report a device loss (exercises restart). */
+  void debugForceDeviceLoss() { forceDeviceLoss_.store(true, std::memory_order_relaxed); }
+
+  /** Name/host API/id of the opened devices (empty when not running). */
+  struct OpenedDevice {
+    std::string id, name, hostApi;
+  };
+  bool openedDevices(OpenedDevice& in, OpenedDevice& out) const;
 
   /**
    * Start the audio engine with given configuration.
@@ -195,6 +216,10 @@ class AudioEngine {
 
   /* Capture callback -> processing thread wake-up (replaces sleep polling). */
   WakeEvent wake_;
+  std::atomic<bool> forceDeviceLoss_{false};
+
+  /* Opened devices, by identity (written in openStreams under the PA mutex). */
+  OpenedDevice openedIn_, openedOut_;
   std::atomic<bool> mmcssActive_{false};
 
   /* Live counters + resolved stream info. */
@@ -206,6 +231,9 @@ class AudioEngine {
   std::atomic<bool> snapOutputExclusive_{false};
   std::atomic<double> snapInputLatencyMs_{0.0};
   std::atomic<double> snapOutputLatencyMs_{0.0};
+
+  /* Restart state (processing thread only). */
+  bool inOutage_ = false;
 
   /* Watchdog state (processing thread only). */
   uint64_t wdLastCaptureCallbacks_ = 0;

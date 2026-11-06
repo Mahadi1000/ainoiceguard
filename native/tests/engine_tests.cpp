@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "device_select.h"
 #include "dynamics.h"
 #include "engine_stats.h"
 #include "ringbuffer.h"
@@ -218,7 +219,69 @@ static void testAgc() {
   CHECK(std::fabs(f[479] / 0.01f - dbToLin(ramp.gainDb())) < 1e-4f);
 }
 
+static DeviceEntry dev(int idx, const char* name, const char* api, int in, int out,
+                       bool defIn = false, bool defOut = false) {
+  DeviceEntry d;
+  d.index = idx;
+  d.name = name;
+  d.hostApi = api;
+  d.maxInputChannels = in;
+  d.maxOutputChannels = out;
+  d.isHostDefaultInput = defIn;
+  d.isHostDefaultOutput = defOut;
+  return d;
+}
+
+static void testDeviceSelect() {
+  const std::string W = "Windows WASAPI";
+  /* Mirrors the real list: MME first (global default), WASAPI later. */
+  std::vector<DeviceEntry> list = {
+      dev(0, "Microsoft Sound Mapper - Input", "MME", 2, 0, true, false),
+      dev(1, "External Microphone (Synaptics ", "MME", 2, 0),
+      dev(4, "Speakers (Synaptics HD Audio)", W.c_str(), 0, 2, false, true),
+      dev(5, "External Microphone (Synaptics HD Audio)", W.c_str(), 2, 0, true, false),
+  };
+
+  /* Default -> the preferred host API's default, not the first (MME) one. */
+  Resolved r = resolveDevice(list, DeviceSpec::def(), true, W);
+  CHECK(r.index == 5 && !r.fellBack);
+  r = resolveDevice(list, DeviceSpec::def(), false, W);
+  CHECK(r.index == 4);
+
+  /* By id survives an index shift (Krisp's devices appeared: mic 5 -> 9). */
+  const DeviceSpec mic = DeviceSpec::byId(W + "|External Microphone (Synaptics HD Audio)");
+  CHECK(resolveDevice(list, mic, true, W).index == 5);
+  auto shifted = list;
+  shifted[3].index = 9;
+  shifted.push_back(dev(5, "Krisp Speaker (Krisp Audio)", W.c_str(), 0, 2));
+  r = resolveDevice(shifted, mic, true, W);
+  CHECK(r.index == 9 && !r.fellBack);
+
+  /* The stale index now points at an output: never used as an input. */
+  r = resolveDevice(shifted, DeviceSpec::byIndex(5), true, W);
+  CHECK(r.index == 9 && r.fellBack);  /* falls back to the default input */
+
+  /* Same name on another host API is not a match (different path). */
+  r = resolveDevice(list, DeviceSpec::byId("MME|External Microphone (Synaptics HD Audio)"), true, W);
+  CHECK(r.index == 5 && r.fellBack);
+
+  /* Missing device -> default + fellBack; none -> -1. */
+  r = resolveDevice(list, DeviceSpec::byId(W + "|USB Headset"), true, W);
+  CHECK(r.index == 5 && r.fellBack);
+  CHECK(resolveDevice(list, DeviceSpec::none(), false, W).index == -1);
+
+  /* No preferred host API present -> any host default, then any device. */
+  r = resolveDevice(list, DeviceSpec::def(), true, "ALSA");
+  CHECK(r.index == 0);
+  std::vector<DeviceEntry> bare = {dev(3, "Mic", "ALSA", 1, 0)};
+  CHECK(resolveDevice(bare, DeviceSpec::def(), true, "ALSA").index == 3);
+  std::vector<DeviceEntry> none;
+  r = resolveDevice(none, DeviceSpec::def(), true, W);
+  CHECK(r.index == -1 && !r.fellBack);
+}
+
 int main() {
+  testDeviceSelect();
   testLimiter();
   testAgc();
   testBuckets();
