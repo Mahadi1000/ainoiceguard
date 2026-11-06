@@ -36,6 +36,7 @@ const vbCableFound = document.getElementById("vbCableFound");
 const vbCableMissing = document.getElementById("vbCableMissing");
 const vbCableLink = document.getElementById("vbCableLink");
 const vbCableRefresh = document.getElementById("vbCableRefresh");
+const vbCableMicName = document.getElementById("vbCableMicName");
 
 /* ── State ───────────────────────────────────────────────────────────────── */
 
@@ -43,6 +44,7 @@ let isRunning = false;
 let metricsInterval = null;
 let noInputPollCount = 0;
 let settings = null; /* persisted settings (see electron/settings.js) */
+let cable = null;    /* detected virtual cable (see device-choice.js findVirtualCable) */
 
 const MUTE = "mute"; /* output value: no output */
 const choice = window.deviceChoice;
@@ -126,7 +128,7 @@ async function loadDevices() {
     populateSelect(outputSelect, outputs, "output");
 
     /* Restore saved devices by id; on first run suggest VB-Cable as output. */
-    const cableId = detectVBCable(outputs);
+    const cableId = detectVBCable(inputs, outputs);
     const inSel = choice.chooseSelection(inputs.map((d) => d.id), settings ? settings.inputId : "", null);
     const outSel = choice.chooseSelection(outputs.map((d) => d.id), settings ? settings.outputId : null, cableId);
     inputSelect.value = inSel.value;
@@ -163,6 +165,21 @@ function populateSelect(select, devices, type) {
 
     select.appendChild(opt);
   }
+}
+
+/**
+ * Recording from the cable's recording end while writing into its playback
+ * end loops the app's own output back into its input (runaway echo).
+ * Shows an error and returns true if that combination is selected.
+ */
+function feedbackLoopSelected() {
+  if (!choice.isFeedbackLoop(inputSelect.value, outputSelect.value, cable)) return false;
+  showError(
+    "“" + cable.micName + "” is for other apps. Choose your real microphone here " +
+      "and keep “" + cable.outputName + "” as Output.",
+  );
+  statusText.textContent = "Idle";
+  return true;
 }
 
 /** Engine status events from the audio thread (via main process). */
@@ -214,6 +231,7 @@ toggleBtn.addEventListener("click", async () => {
         showError(result.error || "Failed to stop");
       }
     } else {
+      if (feedbackLoopSelected()) return;
       statusText.textContent = "Starting...";
       const result = await bridge.start(inputSelect.value, outputSelect.value);
 
@@ -299,6 +317,10 @@ async function doRestart() {
 
     await bridge.stop();
 
+    if (feedbackLoopSelected()) {
+      updateUI(false);
+      return;
+    }
     const result = await bridge.start(inputSelect.value, outputSelect.value);
 
     if (result.success) {
@@ -374,7 +396,8 @@ function startMetricsPolling() {
           noInputPollCount = 0;
           if (outputIsMute) {
             meterHint.textContent =
-              "Output is muted. For other apps (Discord/Zoom), set their mic to CABLE Input.";
+              "Output is muted. Select " + (cable ? cable.outputName : "CABLE Input") +
+              " as Output, then choose " + (cable ? cable.micName : "CABLE Output") + " in Discord/Zoom.";
             meterHint.classList.remove("hidden");
           } else {
             meterHint.textContent = "";
@@ -452,13 +475,15 @@ function hideError() {
 
 /* ── VB-Cable Detection & Auto-Select ────────────────────────────────────── */
 
-function detectVBCable(outputDevices) {
+function detectVBCable(inputDevices, outputDevices) {
   if (vbCableFound) vbCableFound.classList.add("hidden");
   if (vbCableMissing) vbCableMissing.classList.add("hidden");
 
-  const cableDevice = outputDevices.find((d) =>
-    d.name.toLowerCase().includes("cable"),
-  );
+  /* Both ends must exist: the app writes to the playback end ("CABLE Input"),
+     other apps record from the recording end ("CABLE Output"). */
+  cable = choice.findVirtualCable(inputDevices, outputDevices);
+  const cableDevice = cable ? { id: cable.outputId } : null;
+  if (cable && vbCableMicName) vbCableMicName.textContent = cable.micName;
 
   if (cableDevice) {
     if (vbCableFound) vbCableFound.classList.remove("hidden");

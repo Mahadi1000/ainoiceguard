@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "device_select.h"
+#include "drift.h"
 #include "engine_stats.h"
 #include "ringbuffer.h"
 #include "rnnoise_wrapper.h"
@@ -56,6 +57,20 @@ struct AudioConfig {
    * it locks the microphone away from every other application.
    */
   bool tryExclusiveMode = false;
+  /*
+   * Compensate clock drift between the capture and output devices (e.g.
+   * mic vs VB-Cable) by steering the output ring to a fixed level with a
+   * tiny resampling correction (see drift.h). Only active with an output.
+   */
+  bool driftCompensation = true;
+};
+
+/** Live state of the drift compensation. */
+struct DriftSnapshot {
+  bool enabled = false;
+  double ppm = 0.0;           /* applied correction; ~ the measured clock mismatch */
+  double level = 0.0;         /* smoothed continuous output-ring level (samples) */
+  double targetLevel = 0.0;   /* samples */
 };
 
 /** What the engine actually opened (resolved after defaults and fallbacks). */
@@ -145,6 +160,9 @@ class AudioEngine {
   /** Streams as actually opened. Valid after a successful start(). */
   StreamSnapshot streamSnapshot() const;
 
+  /** Drift compensation state (lock-free reads). */
+  DriftSnapshot driftSnapshot() const;
+
   /** Current ring fill levels in samples (lock-free reads). */
   size_t captureFill() const;
   size_t outputFill() const;
@@ -189,6 +207,12 @@ class AudioEngine {
   /** Re-arm the watchdog after a restart attempt. */
   void resetWatchdog();
 
+  /** Processing thread: write a processed frame to the output ring (with drift compensation). */
+  void writeOutput(const float* frame, size_t n);
+
+  /** Reset drift state (start, and after a restart: a new device is a new clock). */
+  void resetDrift();
+
   /** Record resolved devices, exclusive-mode result and PA latencies. */
   void captureStreamSnapshot(int inputIdx, int outputIdx, bool inExcl, bool outExcl);
 
@@ -213,6 +237,15 @@ class AudioEngine {
 
   /* RNNoise processor */
   RNNoiseWrapper rnnoise_;
+
+  /* Drift compensation (resampler/controller used by the processing thread). */
+  DriftResampler driftRs_;
+  DriftController driftCtl_;
+  std::atomic<int64_t> lastOutputReadNs_{0};    /* output cb: time of last read */
+  std::atomic<uint32_t> lastOutputReadCount_{0}; /* output cb: samples requested */
+  std::atomic<double> driftPpm_{0.0};
+  std::atomic<double> driftLevel_{0.0};
+  std::atomic<bool> driftActive_{false};
 
   /* Capture callback -> processing thread wake-up (replaces sleep polling). */
   WakeEvent wake_;

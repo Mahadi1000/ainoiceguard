@@ -139,6 +139,15 @@ if(NG_BUILD_BENCH)
     NG_RNNOISE_COMMIT="a9afcccb3c4f01e6e76a1ef67ccb58b7799856bf"
   )
 
+  # Loopback latency / clock-drift measurement (plays audio; see the file header).
+  add_executable(ng_loopback bench/ng_loopback.cpp)
+  target_include_directories(ng_loopback PRIVATE src)
+  target_link_libraries(ng_loopback PRIVATE portaudio_static)
+  if(WIN32)
+    target_include_directories(ng_loopback PRIVATE "${portaudio_SOURCE_DIR}/include")
+  endif()
+  target_compile_features(ng_loopback PRIVATE cxx_std_17)
+
   # Unit tests for the engine's lock-free stats and ring buffer (no devices).
   add_executable(ng_engine_tests tests/engine_tests.cpp)
   target_include_directories(ng_engine_tests PRIVATE src)

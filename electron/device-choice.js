@@ -45,7 +45,49 @@
     return i >= 0 ? id.slice(i + 1) : id;
   }
 
-  const api = { visibleDevices, chooseSelection, nameFromId };
+  /*
+   * Virtual-cable pairing. A virtual cable has two ends:
+   *   - a playback device the app writes cleaned audio to, and
+   *   - a recording device other apps (Zoom, Discord, Meet) select as mic.
+   * For VB-Audio products the playback end is "... Input (...)" and the
+   * recording end "... Output (...)" -- the reverse of what users expect,
+   * and the previous UI text had it backwards.
+   */
+  const CABLE_PAIRS = [
+    /* [playback-end regex, function: playback name -> recording name] */
+    [/^(CABLE(?:-[A-D])? )Input( \(VB-Audio.*\))$/i, (m) => m[1] + "Output" + m[2]],
+    [/^(VoiceMeeter(?: Aux| VAIO3)? )Input( \(VB-Audio.*\))$/i, (m) => m[1] + "Output" + m[2]],
+    [/^(BlackHole \d+ch)$/i, (m) => m[1]], /* macOS: same name on both ends */
+  ];
+
+  /**
+   * Find a virtual cable among the devices.
+   * @returns {{ outputId, outputName, micId, micName } | null}
+   *   outputId: where the app should write; micName: what other apps select.
+   */
+  function findVirtualCable(inputs, outputs) {
+    const ins = Array.isArray(inputs) ? inputs : [];
+    for (const o of Array.isArray(outputs) ? outputs : []) {
+      for (const [re, toMic] of CABLE_PAIRS) {
+        const m = re.exec(o.name || "");
+        if (!m) continue;
+        const micName = toMic(m);
+        const mic = ins.find((i) => i.name === micName && i.hostApi === o.hostApi);
+        if (mic) return { outputId: o.id, outputName: o.name, micId: mic.id, micName: mic.name };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * True if using `inputId` as the app's microphone while writing to
+   * `outputId` would feed the app's own output back into itself.
+   */
+  function isFeedbackLoop(inputId, outputId, cable) {
+    return !!cable && inputId === cable.micId && outputId === cable.outputId;
+  }
+
+  const api = { visibleDevices, chooseSelection, nameFromId, findVirtualCable, isFeedbackLoop };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

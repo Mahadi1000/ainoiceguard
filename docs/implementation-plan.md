@@ -113,6 +113,8 @@ Mic ─PortAudio capture cb─► captureRing_ (SPSC, 4096 f32) ─► processin
 **Status 2026-10-27:** Phase 4a (processing-thread MMCSS + event wake-up, AGC, limiter) is implemented on `phase4-scheduling-agc`; see [phase4a-scheduling-agc.md](phase4a-scheduling-agc.md). The scheduling fix was moved ahead of the AGC because Phase 3 measured dropped mic audio. The AGC range is +18/−12 dB, not ±12 dB, so that T4.2 is achievable. Still to do: device handling (4b) and the virtual mic.
 
 **Status 2026-11-06:** Phase 4b (device handling) is implemented on `phase4b-device-handling`; see [phase4b-device-handling.md](phase4b-device-handling.md). Drift control is deferred until an output device (VB-Cable) is available to measure it.
+
+**Status 2026-11-06:** Phase 4c (the VB-Cable route, chosen over a first-party driver for now) is implemented on `phase4c-vbcable`: clock-drift compensation (tested in simulation), correct cable pairing and instructions, a feedback-loop guard, and the `ng_loopback` measurement tool. See [phase4c-vbcable.md](phase4c-vbcable.md). The live drift and latency measurement waits on VB-Cable being installed.
 1. **AGC + limiter (L10):**
    - a VAD-gated slow AGC targeting about −18 dBFS for speech, with ±12 dB range and roughly 1 s attack/release;
    - a soft-knee peak limiter (≤ −1 dBFS ceiling, 1–2 ms attack) replacing `std::clamp`;

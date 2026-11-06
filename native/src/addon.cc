@@ -106,8 +106,9 @@ ainoiceguard::DeviceSpec SpecFromJs(const Napi::Value& v) {
 
 /**
  * start(input, output, options?) -> string ("" on success, else an error)
- *   input/output: see SpecFromJs.  options: { exclusive?: boolean }
- *   (WASAPI exclusive mode; default false = shared).
+ *   input/output: see SpecFromJs.
+ *   options: { exclusive?: boolean          WASAPI exclusive (default false = shared),
+ *              driftCompensation?: boolean  clock-drift control (default true) }
  */
 Napi::Value Start(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
@@ -122,6 +123,8 @@ Napi::Value Start(const Napi::CallbackInfo& info) {
     Napi::Object opts = info[2].As<Napi::Object>();
     Napi::Value ex = opts.Get("exclusive").UnwrapOr(env.Undefined());
     if (ex.IsBoolean()) config.tryExclusiveMode = ex.As<Napi::Boolean>().Value();
+    Napi::Value dc = opts.Get("driftCompensation").UnwrapOr(env.Undefined());
+    if (dc.IsBoolean()) config.driftCompensation = dc.As<Napi::Boolean>().Value();
   }
   config.sampleRate = 48000.0;
   config.framesPerBuffer = ainoiceguard::kRNNoiseFrameSize;
@@ -283,6 +286,14 @@ Napi::Object EngineMetrics(Napi::Env env) {
   streams.Set("sampleRate", Napi::Number::New(env, snap.sampleRate));
   streams.Set("ringCapacity", Napi::Number::New(env, double(snap.ringCapacity)));
   e.Set("streams", streams);
+
+  const auto drift = g_engine.driftSnapshot();
+  Napi::Object dr = Napi::Object::New(env);
+  dr.Set("enabled", Napi::Boolean::New(env, drift.enabled));
+  dr.Set("ppm", Napi::Number::New(env, drift.ppm));
+  dr.Set("level", Napi::Number::New(env, drift.level));
+  dr.Set("targetLevel", Napi::Number::New(env, drift.targetLevel));
+  e.Set("drift", dr);
 
   Napi::Object sched = Napi::Object::New(env);
   sched.Set("mmcss", Napi::Boolean::New(env, snap.processingMmcss));
