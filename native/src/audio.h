@@ -248,6 +248,7 @@ class AudioEngine {
   std::atomic<double> driftPpm_{0.0};
   std::atomic<double> driftLevel_{0.0};
   std::atomic<double> driftTarget_{0.0};
+  std::atomic<size_t> primeSamples_{960}; /* output cushion before playback starts */
   std::atomic<bool> driftActive_{false};
 
   /* Capture callback -> processing thread wake-up (replaces sleep polling). */

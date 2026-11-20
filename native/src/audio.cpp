@@ -519,6 +519,29 @@ int AudioEngine::outputCallback(const void* /*input*/, void* output,
   EngineStats& st = engine->stats_;
   bump(st.outputCallbacks);
 
+  /*
+   * Priming: play silence until the ring holds a cushion (the drift target,
+   * 20 ms), then start consuming. Starting on the very first processed frame
+   * left no cushion: measured 9 of 10 starts with an underrun (an audible
+   * tick) without drift control, 3 of 10 with it, and a start-up level that
+   * differed per session (latency spread ~8 ms). Also applies after restarts.
+   */
+  if (!engine->outputPrimed_.load(std::memory_order_relaxed)) {
+    /*
+     * Any extra above the cushion is kept: trimming to exactly the cushion
+     * was tried and brought start-up underruns back (3/10) -- the remaining
+     * level spread comes from the phase between the two devices' callbacks,
+     * which drift control evens out over the first minute.
+     */
+    if (engine->outputRing_->available_read() <
+        engine->primeSamples_.load(std::memory_order_relaxed)) {
+      memset(out, 0, frameCount * sizeof(float));
+      if (statusFlags & paOutputUnderflow) bump(st.outputUnderflows);
+      return paContinue;
+    }
+    engine->outputPrimed_.store(true, std::memory_order_relaxed);
+  }
+
   size_t read = engine->outputRing_->read(out, frameCount);
 
   /* For drift control: when, and how much, the device last consumed. */
@@ -528,16 +551,12 @@ int AudioEngine::outputCallback(const void* /*input*/, void* output,
       std::memory_order_relaxed);
   engine->lastOutputReadCount_.store(uint32_t(frameCount), std::memory_order_relaxed);
 
-  /* Zero-fill remainder if underrun (not enough processed data yet). */
+  /* Zero-fill remainder if underrun (primed, but not enough processed data). */
   if (read < frameCount) {
     memset(out + read, 0, (frameCount - read) * sizeof(float));
-    /* Before the first processed audio arrives this is just start-up priming. */
-    if (engine->outputPrimed_.load(std::memory_order_relaxed)) {
-      bump(st.outputUnderrunEvents);
-      bump(st.outputUnderrunSamples, frameCount - read);
-    }
+    bump(st.outputUnderrunEvents);
+    bump(st.outputUnderrunSamples, frameCount - read);
   }
-  if (read > 0) engine->outputPrimed_.store(true, std::memory_order_relaxed);
 
   /* Counted only -- see captureCallback. */
   if (statusFlags & paOutputUnderflow) bump(st.outputUnderflows);
@@ -660,6 +679,9 @@ void AudioEngine::resetDrift() {
   driftCtl_ = DriftController(cfg);
   driftCtl_.reset();
   driftTarget_.store(cfg.targetFill, std::memory_order_relaxed);
+  /* Output starts once the ring holds the target level (see outputCallback),
+   * so drift control begins at its set point, with or without compensation. */
+  primeSamples_.store(size_t(cfg.targetFill), std::memory_order_relaxed);
   lastOutputReadNs_.store(0, std::memory_order_relaxed);
   lastOutputReadCount_.store(0, std::memory_order_relaxed);
   driftPpm_.store(0.0, std::memory_order_relaxed);
