@@ -63,6 +63,8 @@ struct AudioConfig {
    * tiny resampling correction (see drift.h). Only active with an output.
    */
   bool driftCompensation = true;
+  /* Output-ring level the drift control holds, in samples (0 = default 960). */
+  double driftTargetSamples = 0.0;
 };
 
 /** Live state of the drift compensation. */
@@ -245,6 +247,7 @@ class AudioEngine {
   std::atomic<uint32_t> lastOutputReadCount_{0}; /* output cb: samples requested */
   std::atomic<double> driftPpm_{0.0};
   std::atomic<double> driftLevel_{0.0};
+  std::atomic<double> driftTarget_{0.0};
   std::atomic<bool> driftActive_{false};
 
   /* Capture callback -> processing thread wake-up (replaces sleep polling). */

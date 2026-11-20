@@ -1,6 +1,8 @@
 /**
  * ng_loopback -- measure a playback -> capture path (e.g. VB-Cable).
  *
+ * Exit code: 0 = route works (>= half the bursts arrived), 3 = not connected.
+ *
  * Plays 1 ms tone bursts on an output device and records an input device,
  * both in WASAPI shared mode (Windows) at 48 kHz mono, then reports:
  *   - latency of each burst (output DAC time -> input ADC time), median/min/max
@@ -275,12 +277,27 @@ int main(int argc, char** argv) {
                 outPpm - inPpm, (unsigned long long)run.outUnderflows.load(),
                 (unsigned long long)run.inOverflows.load());
   std::fputs(buf, stdout);
+
+  /* Per-burst latencies (ms), to tell random jitter from a trend. */
+  std::string list = "[";
+  for (size_t i = 0; i < lat.size(); i++) {
+    char b[32];
+    std::snprintf(b, sizeof(b), "%s%.2f", i ? "," : "", lat[i] * 1000);
+    list += b;
+  }
+  list += "]";
+  if (args.count("verbose")) std::printf("latencies_ms %s\n", list.c_str());
+
   if (args.count("json")) {
     if (std::FILE* f = std::fopen(args["json"].c_str(), "wb")) {
-      std::fputs(buf, f);
+      std::string j(buf);
+      j.insert(j.rfind('}'), ",\n  \"latencies_ms\": " + list + "\n");
+      std::fputs(j.c_str(), f);
       std::fclose(f);
     }
   }
   Pa_Terminate();
-  return lat.empty() ? 3 : 0; /* 3 = nothing detected: path not connected */
+  /* 3 = path not connected. Fewer than half the bursts arriving means stray
+   * room sounds matched by chance (seen: 4-16 of 239 when recording a mic). */
+  return lat.size() * 2 < played.size() ? 3 : 0;
 }

@@ -618,22 +618,24 @@ void AudioEngine::processingLoop() {
 /* ───────────────────── Output + Drift Compensation ───────────────────── */
 
 void AudioEngine::writeOutput(const float* frame, size_t n) {
-  if (!config_.driftCompensation) {
+  const bool compensate = config_.driftCompensation;
+
+  if (compensate) {
+    /* Resample by the current ratio (1.0 during warm-up), then write. */
+    float out[DriftResampler::kMaxIn + 16];
+    const size_t m = driftRs_.process(frame, n, out, sizeof(out) / sizeof(out[0]));
+    const size_t w = outputRing_->write(out, m);
+    if (w < m) bump(stats_.outputDroppedSamples, m - w);
+  } else {
     const size_t w = outputRing_->write(frame, n);
     if (w < n) bump(stats_.outputDroppedSamples, n - w);
-    return;
   }
-
-  /* Resample by the current ratio (1.0 during warm-up), then write. */
-  float out[DriftResampler::kMaxIn + 16];
-  const size_t m = driftRs_.process(frame, n, out, sizeof(out) / sizeof(out[0]));
-  const size_t w = outputRing_->write(out, m);
-  if (w < m) bump(stats_.outputDroppedSamples, m - w);
 
   /*
    * Continuous ring level: fill minus the part of the next device block
-   * already "used" since the last output callback (see drift.h). Before the
-   * device has read anything, there is no clock to follow: hold ratio 1.
+   * already "used" since the last output callback (see drift.h). Measured
+   * even when compensation is off, so the natural level can be observed.
+   * Before the device has read anything there is no clock to follow.
    */
   const int64_t lastNs = lastOutputReadNs_.load(std::memory_order_relaxed);
   const uint32_t block = lastOutputReadCount_.load(std::memory_order_relaxed);
@@ -643,14 +645,21 @@ void AudioEngine::writeOutput(const float* frame, size_t n) {
   const double blockSeconds = double(block) / config_.sampleRate;
   const double level = continuousLevel(double(outputRing_->available_read()),
                                        double(nowNs - lastNs) * 1e-9, blockSeconds, double(block));
-  driftRs_.setRatio(driftCtl_.update(level));
-  driftPpm_.store(driftCtl_.ppm(), std::memory_order_relaxed);
+  const double ratio = driftCtl_.update(level);
+  if (compensate) {
+    driftRs_.setRatio(ratio);
+    driftPpm_.store(driftCtl_.ppm(), std::memory_order_relaxed);
+  }
   driftLevel_.store(driftCtl_.fillEma(), std::memory_order_relaxed);
 }
 
 void AudioEngine::resetDrift() {
   driftRs_.reset();
+  DriftController::Config cfg;
+  if (config_.driftTargetSamples > 0) cfg.targetFill = config_.driftTargetSamples;
+  driftCtl_ = DriftController(cfg);
   driftCtl_.reset();
+  driftTarget_.store(cfg.targetFill, std::memory_order_relaxed);
   lastOutputReadNs_.store(0, std::memory_order_relaxed);
   lastOutputReadCount_.store(0, std::memory_order_relaxed);
   driftPpm_.store(0.0, std::memory_order_relaxed);
@@ -664,7 +673,7 @@ DriftSnapshot AudioEngine::driftSnapshot() const {
   d.enabled = driftActive_.load(std::memory_order_relaxed);
   d.ppm = driftPpm_.load(std::memory_order_relaxed);
   d.level = driftLevel_.load(std::memory_order_relaxed);
-  d.targetLevel = driftCtl_.config().targetFill;
+  d.targetLevel = driftTarget_.load(std::memory_order_relaxed);
   return d;
 }
 

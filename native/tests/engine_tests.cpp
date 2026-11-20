@@ -295,10 +295,12 @@ struct DriftSim {
   size_t overflowSamples = 0;   /* dropped because the ring was full */
   double fillMin = 1e9, fillMax = -1e9;
   double finalPpm = 0;
+  double ppmStd = 0;     /* noise of the applied correction after settling */
 };
 
 static DriftSim simulateDrift(double ppm, double seconds, bool control, double settleS = 60.0,
-                              double target = -1, double jitterS = 0.0) {
+                              double target = -1, double jitterS = 0.0,
+                              const DriftController::Config* override = nullptr) {
   /* Deterministic jitter in [-jitterS, +jitterS] on every event time. */
   uint32_t lcg = 12345;
   auto jit = [&]() {
@@ -308,7 +310,7 @@ static DriftSim simulateDrift(double ppm, double seconds, bool control, double s
   RingBuffer ring(4096);
   DriftResampler rs;
   rs.reset();
-  DriftController::Config cfg;
+  DriftController::Config cfg = override ? *override : DriftController::Config{};
   if (target > 0) cfg.targetFill = target;
   DriftController dc(cfg);
   dc.reset();
@@ -322,7 +324,7 @@ static DriftSim simulateDrift(double ppm, double seconds, bool control, double s
   double tp = np, tc = nc;                       /* actual (jittered) times */
   double tcLast = 0.0;                           /* time of the last consumer read */
   bool primed = false;
-  double ppmSum = 0;
+  double ppmSum = 0, ppmSq = 0;
   size_t ppmCount = 0;
 
   while (tp < seconds || tc < seconds) {
@@ -338,6 +340,7 @@ static DriftSim simulateDrift(double ppm, double seconds, bool control, double s
         r.fillMin = std::min(r.fillMin, fill);
         r.fillMax = std::max(r.fillMax, fill);
         ppmSum += dc.ppm();
+        ppmSq += dc.ppm() * dc.ppm();
         ppmCount++;
       }
       np += prodStep;
@@ -352,6 +355,7 @@ static DriftSim simulateDrift(double ppm, double seconds, bool control, double s
     }
   }
   r.finalPpm = ppmCount ? ppmSum / double(ppmCount) : 0.0;
+  r.ppmStd = ppmCount ? std::sqrt(std::max(0.0, ppmSq / double(ppmCount) - r.finalPpm * r.finalPpm)) : 0.0;
   return r;
 }
 
@@ -488,6 +492,29 @@ static void testLoopbackMath() {
 }
 
 int main(int argc, char** argv) {
+  /* `ng_engine_tests sweep2`: gains/deadband candidates at lower targets. */
+  if (argc > 1 && std::string(argv[1]) == "sweep2") {
+    struct Cand { const char* name; double kp, ki, db, alpha; };
+    const Cand cands[] = {
+        {"B gentle    ", 0.0032, 2e-6, 0.0, 0.02},
+        {"E slow EMA  ", 0.0032, 2e-6, 0.0, 0.005},
+    };
+    for (const Cand& c : cands) {
+      DriftController::Config cfg;
+      cfg.kp = c.kp; cfg.ki = c.ki; cfg.deadband = c.db; cfg.emaAlpha = c.alpha;
+      for (double target : {960.0}) {
+        for (double jitterMs : {2.0, 4.0}) {
+          for (double ppm : {1000.0, 300.0, 0.0, -1000.0}) {
+            const DriftSim s = simulateDrift(ppm, 900.0, true, 120.0, target, jitterMs / 1000.0, &cfg);
+            std::printf("%s T%4.0f j%.0fms drift %+5.0f: under %5zu over %5zu learned %+7.1f ppm sd %6.1f fill [%4.0f,%4.0f]\n",
+                        c.name, target, jitterMs, ppm, s.underrunSamples, s.overflowSamples, -s.finalPpm,
+                        s.ppmStd, s.fillMin, s.fillMax);
+          }
+        }
+      }
+    }
+    return 0;
+  }
   /* `ng_engine_tests sweep`: print drift behaviour for a range of targets. */
   if (argc > 1 && std::string(argv[1]) == "sweep") {
     for (double jitterMs : {0.0, 2.0, 4.0}) {

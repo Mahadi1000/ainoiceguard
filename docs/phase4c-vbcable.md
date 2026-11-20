@@ -9,7 +9,7 @@
 
 **Design** (`native/src/drift.h`, used in `AudioEngine::writeOutput`):
 - **DriftResampler:** 4-point Hermite interpolation at a ratio near 1. Exact passthrough at ratio 1 (constant 2-sample delay), and ≥ 60 dB SNR at +500 ppm on a 1 kHz tone.
-- **DriftController:** PI control of the output-ring level towards **960 samples (20 ms)**, clamped to ±2,000 ppm, with a 0.5 s warm-up. Gains come from the loop model (ω = 0.004 rad/frame, ζ ≈ 0.8).
+- **DriftController:** PI control of the output-ring level towards **960 samples (20 ms)**, clamped to ±2,000 ppm, with a 0.5 s warm-up. Final settings after the live measurements (§4): kp = 0.0032, ki = 2e-6 (ω = 0.001 rad/frame, ζ ≈ 0.8), level smoothing ≈ 2 s (α = 0.005). Engine options: `driftCompensation` (default on) and `driftTarget` (samples, 240–3,000, for testing).
 - **Continuous level:** the output callback removes one 480-sample block at a time, so the fill the producer sees is a sawtooth whose phase slides with drift. The controller uses `fill − block × (time since the last device read / block period)`, a steady-drain model, from timestamps the output callback stores. On or after a restart (a new device is a new clock), everything resets.
 - Engine option `driftCompensation` (default **on**); `getMetrics().engine.drift = { enabled, ppm, level, targetLevel }`.
 
@@ -31,7 +31,7 @@
 
 **Without control** the same simulation underruns at +300 ppm and overflows at −300 ppm. The tests assert this too, so they can't pass by being insensitive.
 
-**Live:** the muted (mic-only) path is unaffected (drift `enabled: false`, 0 drops, 32 ms). **Real drift hasn't been measured yet**: it needs VB-Cable (see §4).
+**Live:** measured with VB-Cable on 2026-11-20; see §4. The first tuning (kp 0.0128) was too jumpy on real hardware and was retuned there.
 
 ## 2. VB-Cable pairing and correct instructions
 
@@ -60,13 +60,49 @@ deps/bench-build/Release/ng_loopback.exe --list
 deps/bench-build/Release/ng_loopback.exe --out "CABLE Input" --in "CABLE Output" --seconds 20 --json bench/results/loopback-cable.json
 ```
 
-## 4. Waiting on VB-Cable (not measured yet)
+## 4. Live measurements with VB-Cable (2026-11-20)
 
-After VB-Cable is installed (vb-audio.com/Cable, free; may need a reboot):
-1. `ng_loopback` CABLE Input → CABLE Output: the cable's latency and whether it's working.
-2. `ng_loopback --out "CABLE Input" --in "External Microphone" …`: no burst will be detected (exit 3), but the two `clock_ppm` values give **the real mic-vs-cable drift**.
-3. Run the engine with the mic → CABLE Input for ≥ 5 min and read `engine.drift.ppm` (should match item 2), `engine.ring.outputUnderrunEvents` (expect 0 after warm-up) and `outputDroppedSamples` (expect 0).
-4. In the app: the banner shows "CABLE Output (VB-Audio Virtual Cable)"; picking it as the app's own mic is refused.
+Same HP ProDesk, VB-Cable installed, WASAPI shared mode, mic = "External Microphone (Synaptics HD Audio)".
+
+**Cable route and latency** (`ng_loopback`, CABLE Input → CABLE Output, silent):
+
+| run | bursts | latency median | p10–p90 | min–max | sd | trend | PortAudio's estimate |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 20 s | 79/79 | 110.6 ms | — | 99.5–133.4 ms | — | — | 44 ms |
+| 30 s | 119/119 | **102.1 ms** | 99.7–105.2 ms | — | 2.1 ms | 0.001 ms/s | 44 ms |
+
+VB-Cable adds **~100–110 ms**, about 60 ms more than PortAudio reports. It's stable within a session (sd 2 ms, no trend) and varies a little between sessions. This is most likely VB-Cable's internal buffer (its "Max Latency" setting in the VB-Cable control panel). The figure is measured but not checked against an independent reference.
+
+**Mic vs cable clock** (`ng_loopback` into the cable while recording the mic, 2 × 60 s):
+
+| run | mic clock | cable clock | difference |
+|---|---:|---:|---:|
+| 1 | +8.9 ppm | +2.9 ppm | −6.0 ppm |
+| 2 | +4.7 ppm | +5.4 ppm | +0.7 ppm |
+
+On this machine the two clocks are essentially the same (within the method's ~±6 ppm noise). USB headsets typically drift 50–300 ppm, which is what the compensation is for. (The tool's exit code now requires at least half the bursts to arrive: recording the mic matched 4–16 of 239 bursts to random room sounds.)
+
+**Engine runs, 5 min each, mic → CABLE Input (silent):**
+
+| run | applied correction (after 60 s) | level vs target | underrun events | drops / xruns / overruns | est. latency |
+|---|---|---|---:|---|---:|
+| control **off** (two sessions) | — | natural level ~590 | 1 (start) | 0 / 0 / 0 | 64.5 / ~74 ms (varies per session) |
+| first tuning (kp 0.0128, α 0.02), target 960 | −128 … +300 ppm | held ~960 | 1 (start) | 0 / 0 / 0 | 80.1 ms |
+| gentle gains (α 0.02), target 720 | sd 98 ppm | held ~720 | **2** | 0 / 0 / 0 | 74.9 ms |
+| gentle gains (α 0.02), target 960 | sd 136 ppm | held ~960 | 1 (start) | 0 / 0 / 0 | 77.7 ms |
+| **final (gentle gains, α 0.005), target 960** | **mean −9.8, sd 19.3 ppm** | 943–967 | 1 (start) | 0 / 0 / 0 | **77.6 ms** |
+
+- **Retuning:** the live level wobbles about ±40 samples (output callbacks arrive in bursts), more than the simulation assumed. The first tuning turned that into ±100–300 ppm of needless correction. That's inaudible (300 ppm ≈ 0.5 cents of pitch) but meaningless. Gentler gains plus heavier smoothing bring it to **sd 19 ppm, centred on the real ~0–6 ppm drift.**
+- **Target:** 960 rather than 720, because 720 showed an extra underrun live, and in simulation it underruns from ±3 ms jitter.
+- **Cost on this machine:** with almost no drift, compensation mainly holds the ring at a fixed level. That gives ~3–13 ms more latency than control-off, depending on where a session happens to settle, in exchange for **predictable** latency and protection against real drift in long sessions or on USB devices.
+- **One underrun event at start** in every run, with or without control: the first output block before the ring has filled. It's a start-up artefact, not drift.
+
+**App** (real window, temporary settings, VB-Cable installed):
+- the first run selects CABLE Input as the output, and the banner says to select "CABLE Output (VB-Audio Virtual Cable)" in Zoom, Discord or Meet;
+- choosing CABLE Output as Ainoiceguard's own mic is refused, and the engine doesn't start;
+- the real mic → CABLE Input starts with the latency label at "~73 ms".
+
+**End-to-end latency for a call app** ≈ the app's engine path (~65–78 ms estimated: mic device + rings + RNNoise + output device) **+ VB-Cable's ~100 ms** ≈ **165–180 ms**. VB-Cable is the largest single contributor. That's worth noting in the UI and the docs, and it's one argument for a first-party driver later.
 
 ## Tests
 

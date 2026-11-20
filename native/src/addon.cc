@@ -108,7 +108,8 @@ ainoiceguard::DeviceSpec SpecFromJs(const Napi::Value& v) {
  * start(input, output, options?) -> string ("" on success, else an error)
  *   input/output: see SpecFromJs.
  *   options: { exclusive?: boolean          WASAPI exclusive (default false = shared),
- *              driftCompensation?: boolean  clock-drift control (default true) }
+ *              driftCompensation?: boolean  clock-drift control (default true),
+ *              driftTarget?: number         output-ring level in samples (240-3000, default 960) }
  */
 Napi::Value Start(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
@@ -125,6 +126,11 @@ Napi::Value Start(const Napi::CallbackInfo& info) {
     if (ex.IsBoolean()) config.tryExclusiveMode = ex.As<Napi::Boolean>().Value();
     Napi::Value dc = opts.Get("driftCompensation").UnwrapOr(env.Undefined());
     if (dc.IsBoolean()) config.driftCompensation = dc.As<Napi::Boolean>().Value();
+    Napi::Value dt = opts.Get("driftTarget").UnwrapOr(env.Undefined());
+    if (dt.IsNumber()) {
+      const double v = dt.As<Napi::Number>().DoubleValue();
+      if (v >= 240 && v <= 3000) config.driftTargetSamples = v; /* sane range only */
+    }
   }
   config.sampleRate = 48000.0;
   config.framesPerBuffer = ainoiceguard::kRNNoiseFrameSize;

@@ -101,16 +101,28 @@ class DriftController {
   struct Config {
     double targetFill = 960.0;  /* samples: 20 ms at 48 kHz */
     double maxPpm = 2000.0;     /* clamp (+/-0.2 %); real clock drift is ~10-300 ppm */
-    double emaAlpha = 0.02;     /* fill smoothing per frame (~0.5 s) */
+    /* Level smoothing per frame (~2 s). Live, the level wobbled ~+/-40 samples
+     * (bursty output callbacks); 0.02 (~0.5 s) let that through as
+     * +/-100-300 ppm of correction. 0.005 halves the noise in simulation with
+     * no loss of stability or accuracy (`ng_engine_tests sweep2`). */
+    double emaAlpha = 0.005;
     /*
      * Loop per 10 ms frame: x' = -(T/2)·(kp·x/T + I + d) with I' = ki·x/T,
      * i.e. natural frequency w = sqrt(ki/2) and damping zeta = kp/(4w).
-     * w = 0.004 rad/frame (~16 s period) and zeta ~0.8 settle in ~10-20 s.
-     * (A first try with kp=5e-4, ki=5e-6 gave zeta ~0.08 and swung +/-450 samples.)
+     * History:
+     *  - kp=5e-4, ki=5e-6: zeta ~0.08, swung +/-450 samples (simulation).
+     *  - kp=0.0128, ki=3.2e-5 (w=0.004, zeta 0.8): learned drift exactly, but
+     *    with real callback jitter the applied correction wandered
+     *    -128..+300 ppm while the true drift was ~0-6 ppm (live, VB-Cable).
+     *  - kp=0.0032, ki=2e-6 (w=0.001 rad/frame, ~63 s period, zeta 0.8):
+     *    ~4x less correction noise (sd ~35-40 ppm with +/-2 ms jitter) and
+     *    still learns +/-1000 ppm exactly (`ng_engine_tests sweep2`).
+     * A deadband on the P term made it worse (limit cycles) and is off.
      */
-    double kp = 0.0128;         /* ratio change per unit relative fill error */
-    double ki = 0.000032;       /* integral gain per frame */
+    double kp = 0.0032;         /* ratio change per unit relative fill error */
+    double ki = 0.000002;       /* integral gain per frame */
     int warmupFrames = 50;      /* 0.5 s of priming before control starts */
+    double deadband = 0.0;      /* |relative error| below this: no proportional action */
   };
 
   DriftController() = default;
@@ -137,7 +149,12 @@ class DriftController {
     const double err = (ema_ - cfg_.targetFill) / cfg_.targetFill;
     const double lim = cfg_.maxPpm * 1e-6;
     integ_ = std::clamp(integ_ + cfg_.ki * err, -lim, lim); /* anti-windup */
-    ratio_ = 1.0 + std::clamp(cfg_.kp * err + integ_, -lim, lim);
+    /* Proportional action only outside the deadband (ignores timing jitter);
+     * the integral term still learns the long-term clock mismatch. */
+    const double pErr = std::fabs(err) <= cfg_.deadband
+                            ? 0.0
+                            : err - std::copysign(cfg_.deadband, err);
+    ratio_ = 1.0 + std::clamp(cfg_.kp * pErr + integ_, -lim, lim);
     return ratio_;
   }
 
