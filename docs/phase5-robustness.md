@@ -46,8 +46,33 @@ After the first 60 s the correction averaged **+3.3 ppm (sd 18.9)**, which match
 
 ## Still open (Phase 5 candidates)
 
-1. **Live device-list refresh and return to a preferred device** when it reappears (Windows `IMMNotificationClient`). Today the list updates only on restart or via the refresh link.
-2. **A physical unplug/replug test** of the watchdog (needs a USB headset; the restart path itself is tested with the forced-loss hook).
+1. **Live device-list refresh and return to a preferred device:** implemented in §5.2. The unplug path is verified live; **the replug switch-back and follow-default still need a live test.**
+2. ~~A physical unplug/replug test of the watchdog~~: the unplug part was done with a USB camera mic (§5.2).
 3. **An AGC on/off toggle in the UI**, plus the pending silent-room AGC check.
 4. **MMCSS-equivalent priority on Linux/macOS.**
 5. **A VB-Cable latency note in the UI and docs:** the cable adds ~100 ms on this machine (Phase 4c), its largest single contributor.
+
+## 5.2 Device changes while running (in progress)
+
+**Goal:** react to devices being plugged in or out while the app runs:
+- **return to the selected device** when it comes back after a fallback;
+- **follow the Windows default** when "System Default" is selected;
+- **refresh the device lists**, which PortAudio freezes while streams are open.
+
+**Design:**
+- `device_watch.{h,cpp}`: a Windows `IMMNotificationClient` on its own COM (MTA) thread. Bursts of notifications are debounced (300 ms of quiet) into one change. A `snapshot()` call lists active endpoints and the defaults by the same friendly names PortAudio uses.
+- `device_policy.h` (pure, unit-tested) decides between keeping the current device, `ReturnToPreferred` and `FollowDefault`. The same name on another host API is not a match.
+- The engine watchdog checks the watcher's change count every 250 ms. A switch reuses the restart path (PortAudio re-init plus resolve by id), counts in `recovery.reselects`, and emits a `switched` event, not `device-lost`.
+- The addon emits `devices-changed` to JS. While running, `getDevices()` takes the WASAPI entries from the live snapshot, which was verified identical to PortAudio's names and default flags.
+- Renderer: refreshes the lists on `devices-changed` and `switched`. While a saved device is missing, the engine is still started with the **saved id**, so it falls back by itself and can return later. An explicit choice in the dropdown clears that.
+
+**Found and fixed during the live test:** a USB camera mic took more than 1 s to deliver its first audio and was flagged as lost 1.5 s after start, causing a needless restart. The stall watchdog now allows 3 s for the first audio after a (re)start, and keeps 1 s once audio flows.
+
+**Verified live** (USB camera mic "Microphone (USB Camera Audio)", output muted):
+
+| scenario | result |
+|---|---|
+| unplug while running on the camera mic | `device-lost` + `devices-changed` at 65.8 s; **fell back to the built-in mic in 0.2 s** (`fallback`, `restarted`); 0 dropped samples |
+| start with the chosen camera mic unplugged | immediate `fallback` to the built-in mic, no false loss |
+| **replug → switch back** | **not yet observed:** the camera did not re-appear in Windows during either test window |
+| follow a changed Windows default | not yet tested (needs the default changed in Sound settings during a run) |

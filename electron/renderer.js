@@ -45,6 +45,20 @@ let metricsInterval = null;
 let noInputPollCount = 0;
 let settings = null; /* persisted settings (see electron/settings.js) */
 let cable = null;    /* detected virtual cable (see device-choice.js findVirtualCable) */
+/* The saved device is not connected; the select shows System Default. */
+let savedInputMissing = false;
+let savedOutputMissing = false;
+
+/*
+ * Ids to start the engine with. While a saved device is missing, the select
+ * shows "System Default", but the engine still gets the saved id: it falls
+ * back to the default itself and switches back when the device returns.
+ */
+function startIds() {
+  const input = savedInputMissing && settings ? settings.inputId : inputSelect.value;
+  const output = savedOutputMissing && settings ? settings.outputId : outputSelect.value;
+  return [input, output];
+}
 
 const MUTE = "mute"; /* output value: no output */
 const choice = window.deviceChoice;
@@ -135,6 +149,8 @@ async function loadDevices() {
     outputSelect.value = outSel.value;
 
     const missing = [];
+    savedInputMissing = inSel.missing;
+    savedOutputMissing = outSel.missing;
     if (inSel.missing) missing.push("microphone “" + choice.nameFromId(settings.inputId) + "”");
     if (outSel.missing) missing.push("output “" + choice.nameFromId(settings.outputId) + "”");
     if (missing.length) {
@@ -196,6 +212,15 @@ function handleEngineStatus(ev) {
     showError(ev.message);
   } else if (ev.type === "fallback") {
     showError(ev.message);
+  } else if (ev.type === "switched") {
+    /* Back on the selected device, or following a new system default. */
+    statusText.textContent = "Active";
+    hideError();
+    loadDevices();
+  } else if (ev.type === "devices-changed") {
+    /* A device was plugged in/out or the default changed: refresh the
+       lists (saved selections are re-applied by id). */
+    loadDevices();
   }
 }
 
@@ -233,7 +258,7 @@ toggleBtn.addEventListener("click", async () => {
     } else {
       if (feedbackLoopSelected()) return;
       statusText.textContent = "Starting...";
-      const result = await bridge.start(inputSelect.value, outputSelect.value);
+      const result = await bridge.start(...startIds());
 
       if (result.success) {
         updateUI(true);
@@ -287,10 +312,12 @@ vadThreshSlider.addEventListener("change", async () => {
 /* ── Device selection change while running -> restart ────────────────────── */
 
 inputSelect.addEventListener("change", () => {
+  savedInputMissing = false; /* an explicit choice replaces the missing device */
   saveSettings({ inputId: inputSelect.value });
   restartIfRunning();
 });
 outputSelect.addEventListener("change", () => {
+  savedOutputMissing = false;
   saveSettings({ outputId: outputSelect.value });
   restartIfRunning();
 });
@@ -321,7 +348,7 @@ async function doRestart() {
       updateUI(false);
       return;
     }
-    const result = await bridge.start(inputSelect.value, outputSelect.value);
+    const result = await bridge.start(...startIds());
 
     if (result.success) {
       updateUI(true);

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "device_policy.h"
 #include "device_select.h"
 #include "drift.h"
 #include "dynamics.h"
@@ -434,6 +435,45 @@ static void testDriftResampler() {
   CHECK(snrDb >= 60.0);
 }
 
+static void testDevicePolicy() {
+  const std::string W = "Windows WASAPI";
+  const std::string headset = "Headset Microphone (USB Audio)";
+  const std::string builtin = "External Microphone (Synaptics HD Audio)";
+  EndpointSnapshot snap;
+  snap.capture = {builtin};
+  snap.render = {"Speakers (Synaptics HD Audio)", "CABLE Input (VB-Audio Virtual Cable)"};
+  snap.defaultCapture = builtin;
+  snap.defaultRender = "Speakers (Synaptics HD Audio)";
+
+  const DeviceSpec wantHeadset = DeviceSpec::byId(W + "|" + headset);
+
+  /* Headset requested but unplugged: running on the fallback; nothing to do. */
+  CHECK(decideReselect(wantHeadset, builtin, snap, true, W) == Reselect::None);
+  /* Headset plugged back in -> return to it. */
+  snap.capture.push_back(headset);
+  CHECK(decideReselect(wantHeadset, builtin, snap, true, W) == Reselect::ReturnToPreferred);
+  /* Already on it -> nothing. */
+  CHECK(decideReselect(wantHeadset, headset, snap, true, W) == Reselect::None);
+  /* Same name on another host API is a different device: not a match. */
+  CHECK(decideReselect(DeviceSpec::byId("MME|" + headset), builtin, snap, true, W) == Reselect::None);
+
+  /* "System Default": follow the OS default when it moves. */
+  CHECK(decideReselect(DeviceSpec::def(), builtin, snap, true, W) == Reselect::None);
+  snap.defaultCapture = headset;
+  CHECK(decideReselect(DeviceSpec::def(), builtin, snap, true, W) == Reselect::FollowDefault);
+  snap.defaultCapture = "";
+  CHECK(decideReselect(DeviceSpec::def(), builtin, snap, true, W) == Reselect::None);
+
+  /* Output side, mute, legacy index. */
+  const DeviceSpec cable = DeviceSpec::byId(W + "|CABLE Input (VB-Audio Virtual Cable)");
+  CHECK(decideReselect(cable, "Speakers (Synaptics HD Audio)", snap, false, W) == Reselect::ReturnToPreferred);
+  CHECK(decideReselect(DeviceSpec::none(), "", snap, false, W) == Reselect::None);
+  CHECK(decideReselect(DeviceSpec::byIndex(3), builtin, snap, true, W) == Reselect::None);
+
+  CHECK(nameForHost(W + "|A|B", W) == "A|B");  /* names may contain '|' */
+  CHECK(nameForHost("MME|X", W).empty());
+}
+
 static void testLoopbackMath() {
   using namespace loopback;
   const double sr = 48000.0;
@@ -528,6 +568,7 @@ int main(int argc, char** argv) {
     }
     return 0;
   }
+  testDevicePolicy();
   testLoopbackMath();
   testDriftResampler();
   testDriftControl();

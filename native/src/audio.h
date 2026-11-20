@@ -25,6 +25,7 @@
 #include <thread>
 #include <vector>
 
+#include "device_policy.h"
 #include "device_select.h"
 #include "drift.h"
 #include "engine_stats.h"
@@ -271,11 +272,15 @@ class AudioEngine {
 
   /* Restart state (processing thread only). */
   bool inOutage_ = false;
+  Reselect pendingReselect_ = Reselect::None;  /* why the next restart happens */
+  uint64_t wdLastDevChanges_ = 0;              /* DeviceWatcher::changeCount() seen */
+  std::string preferredHost_;                  /* host API of the snapshot (set in openStreams) */
 
   /* Watchdog state (processing thread only). */
   uint64_t wdLastCaptureCallbacks_ = 0;
   int64_t wdLastProgressMs_ = 0;
   int64_t wdLastCheckMs_ = 0;
+  bool wdAudioFlowing_ = false;  /* capture has delivered audio since (re)start */
 
   /* Processing thread */
   std::thread processingThread_;

@@ -4,7 +4,7 @@
       "target_name": "ainoiceguard",
       "cflags!": ["-fno-exceptions"],
       "cflags_cc!": ["-fno-exceptions"],
-      "sources": ["src/addon.cc", "src/audio.cpp", "src/rnnoise_wrapper.cpp"],
+      "sources": ["src/addon.cc", "src/audio.cpp", "src/rnnoise_wrapper.cpp", "src/device_watch.cpp"],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
         "src",

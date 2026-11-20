@@ -19,6 +19,7 @@
 #include <cstring>
 #include <mutex>
 
+#include "device_watch.h"
 #include "portaudio.h"
 
 #ifdef _WIN32
@@ -47,6 +48,9 @@ static constexpr int kMaxRestartAttempts = 5;
  */
 static constexpr int64_t kWatchdogIntervalMs = 250;
 static constexpr int64_t kCaptureStallMs = 1000;
+/* Before a (re)opened device delivers its first audio, allow longer: a USB
+ * camera mic took >1 s to start and was flagged as lost right after start. */
+static constexpr int64_t kFirstAudioGraceMs = 3000;
 
 /* Max time the processing thread blocks waiting for audio before re-checking
  * the running flag and watchdog. Frames normally arrive every 10 ms. */
@@ -253,6 +257,7 @@ std::string AudioEngine::openStreams() {
    */
   const auto devices = collectDevicesLocked();
   const std::string preferred = preferredHostApiLocked();
+  preferredHost_ = preferred; /* host API the device watcher's snapshot describes */
   const bool outputEnabled = config_.output.kind != DeviceSpec::Kind::None;
   const Resolved rin = resolveDevice(devices, config_.input, true, preferred);
   const Resolved rout = outputEnabled ? resolveDevice(devices, config_.output, false, preferred)
@@ -592,6 +597,9 @@ void AudioEngine::processingLoop() {
 
   wdLastCaptureCallbacks_ = stats_.captureCallbacks.load(std::memory_order_relaxed);
   wdLastProgressMs_ = wdLastCheckMs_ = steadyMs();
+  wdAudioFlowing_ = false; /* first-audio grace applies again */
+  /* Only endpoint changes from now on matter (the start already resolved devices). */
+  wdLastDevChanges_ = DeviceWatcher::instance().changeCount();
 
   while (running_.load(std::memory_order_acquire)) {
     /* Check if we have a full RNNoise frame available. */
@@ -719,22 +727,50 @@ bool AudioEngine::deviceLost() {
   if (cb != wdLastCaptureCallbacks_) {
     wdLastCaptureCallbacks_ = cb;
     wdLastProgressMs_ = now;
-  } else if (now - wdLastProgressMs_ > kCaptureStallMs) {
+    wdAudioFlowing_ = true;
+  } else if (now - wdLastProgressMs_ > (wdAudioFlowing_ ? kCaptureStallMs : kFirstAudioGraceMs)) {
     lost = true;
   }
 
   if (lost) {
     stats_.deviceLossEvents.store(stats_.deviceLossEvents.load(std::memory_order_relaxed) + 1,
                                   std::memory_order_relaxed);
+    return true;
   }
-  return lost;
+
+  /*
+   * Endpoints changed (plugged in/out, enabled/disabled, new OS default)?
+   * Decide whether to switch: back to the preferred device after a
+   * fallback, or to the new default when "System Default" is selected.
+   * A switch reuses the restart path (PortAudio re-init + resolve by id).
+   */
+  const uint64_t changes = DeviceWatcher::instance().changeCount();
+  if (changes != wdLastDevChanges_) {
+    wdLastDevChanges_ = changes;
+    EndpointSnapshot snap;
+    if (DeviceWatcher::snapshot(snap)) {
+      Reselect r = decideReselect(config_.input, openedIn_.name, snap, true, preferredHost_);
+      if (r == Reselect::None && config_.output.kind != DeviceSpec::Kind::None) {
+        r = decideReselect(config_.output, openedOut_.name, snap, false, preferredHost_);
+      }
+      if (r != Reselect::None) {
+        pendingReselect_ = r;
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /* ───────────────────── Auto-Restart ───────────────────── */
 
 void AudioEngine::attemptRestart() {
+  /* A deliberate switch (device back / new default) is not an outage. */
+  const Reselect reason = pendingReselect_;
+  pendingReselect_ = Reselect::None;
+
   /* One "device-lost" event per outage, not one per retry cycle. */
-  if (!inOutage_) {
+  if (reason == Reselect::None && !inOutage_) {
     inOutage_ = true;
     if (statusCallback_) {
       statusCallback_("device-lost", "Audio device lost; trying to reconnect...");
@@ -793,10 +829,22 @@ void AudioEngine::attemptRestart() {
       }
     }
 
-    stats_.restarts.store(stats_.restarts.load(std::memory_order_relaxed) + 1,
-                          std::memory_order_relaxed);
     resetWatchdog();
     resetDrift(); /* the (re)opened output may be a different clock */
+    const std::string now =
+        openedIn_.name + (openedOut_.name.empty() ? "" : " -> " + openedOut_.name);
+    if (reason != Reselect::None) {
+      stats_.reselects.store(stats_.reselects.load(std::memory_order_relaxed) + 1,
+                             std::memory_order_relaxed);
+      if (statusCallback_) {
+        statusCallback_("switched", reason == Reselect::ReturnToPreferred
+                                        ? "Your selected device is back: " + now
+                                        : "Following the new system default: " + now);
+      }
+      return;
+    }
+    stats_.restarts.store(stats_.restarts.load(std::memory_order_relaxed) + 1,
+                          std::memory_order_relaxed);
     inOutage_ = false;
     if (statusCallback_) {
       statusCallback_("restarted", "Audio reconnected: " + openedIn_.name);
@@ -818,6 +866,7 @@ void AudioEngine::resetWatchdog() {
   outputPrimed_.store(false, std::memory_order_relaxed);
   wdLastCaptureCallbacks_ = stats_.captureCallbacks.load(std::memory_order_relaxed);
   wdLastProgressMs_ = wdLastCheckMs_ = steadyMs();
+  wdAudioFlowing_ = false; /* first-audio grace applies again */
 }
 
 /* ───────────────────── Level Control ───────────────────── */

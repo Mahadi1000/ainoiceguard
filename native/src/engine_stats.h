@@ -84,6 +84,7 @@ struct EngineStats {
   std::atomic<uint32_t> restarts{0};         /* successful automatic restarts */
   std::atomic<uint32_t> restartFailures{0};  /* gave up after all attempts */
   std::atomic<uint32_t> deviceLossEvents{0}; /* watchdog detections */
+  std::atomic<uint32_t> reselects{0};        /* switched back to preferred / followed default */
 
   /** Reset everything. Call only while no audio thread is running. */
   void reset() {
@@ -102,6 +103,7 @@ struct EngineStats {
     restarts.store(0, std::memory_order_relaxed);
     restartFailures.store(0, std::memory_order_relaxed);
     deviceLossEvents.store(0, std::memory_order_relaxed);
+    reselects.store(0, std::memory_order_relaxed);
   }
 
   /** Processing thread: record one frame's processing time. */

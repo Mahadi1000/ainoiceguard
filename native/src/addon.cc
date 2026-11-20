@@ -25,7 +25,11 @@
 
 #include <utility>
 
+#include <algorithm>
+#include <mutex>
+
 #include "audio.h"
+#include "device_watch.h"
 
 namespace {
 
@@ -34,7 +38,23 @@ static ainoiceguard::AudioEngine g_engine;
 
 /* Engine status events -> JS (set by onStatus; may be called from any thread). */
 static Napi::ThreadSafeFunction g_statusTsfn;
-static bool g_statusTsfnActive = false;
+static std::atomic<bool> g_statusTsfnActive{false};
+/* Serialises emitting with (re)creating/releasing the TSFN: events come from
+ * the engine thread and the device-watcher thread. */
+static std::mutex g_statusMutex;
+
+/* Queue a status event to JS from any thread (engine or device watcher). */
+void EmitStatus(const std::string& type, const std::string& message) {
+  std::lock_guard<std::mutex> lock(g_statusMutex);
+  if (!g_statusTsfnActive.load(std::memory_order_acquire)) return;
+  auto* payload = new std::pair<std::string, std::string>(type, message);
+  napi_status st = g_statusTsfn.NonBlockingCall(
+      payload, [](Napi::Env env, Napi::Function cb, std::pair<std::string, std::string>* p) {
+        cb.Call({Napi::String::New(env, p->first), Napi::String::New(env, p->second)});
+        delete p;
+      });
+  if (st != napi_ok) delete payload; /* queue closing: drop the event */
+}
 
 Napi::Object DeviceToJs(Napi::Env env, const ainoiceguard::DeviceInfo& d, bool input) {
   Napi::Object obj = Napi::Object::New(env);
@@ -61,6 +81,37 @@ Napi::Value GetDevices(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
 
   auto devices = ainoiceguard::AudioEngine::enumerateDevices();
+
+  /*
+   * While the engine runs, PortAudio's device list is frozen at the last
+   * initialisation, so devices plugged in since then would be missing. Take
+   * the preferred host's entries from a live OS snapshot instead (Windows),
+   * using the same names PortAudio uses, so the ids stay valid.
+   */
+  ainoiceguard::EndpointSnapshot snap;
+  std::string preferredHost;
+  for (const auto& d : devices)
+    if (d.preferredHostApi) preferredHost = d.hostApi;
+  if (g_engine.isRunning() && !preferredHost.empty() &&
+      ainoiceguard::DeviceWatcher::snapshot(snap)) {
+    devices.erase(std::remove_if(devices.begin(), devices.end(),
+                                 [&](const ainoiceguard::DeviceInfo& d) { return d.hostApi == preferredHost; }),
+                  devices.end());
+    auto add = [&](const std::string& name, bool input, bool isDefault) {
+      ainoiceguard::DeviceInfo d;
+      d.index = -1; /* not a PortAudio index; use the id */
+      d.name = name;
+      d.hostApi = preferredHost;
+      d.maxInputChannels = input ? 1 : 0;
+      d.maxOutputChannels = input ? 0 : 1;
+      d.isHostDefaultInput = input && isDefault;
+      d.isHostDefaultOutput = !input && isDefault;
+      d.preferredHostApi = true;
+      devices.push_back(d);
+    };
+    for (const auto& n : snap.capture) add(n, true, n == snap.defaultCapture);
+    for (const auto& n : snap.render) add(n, false, n == snap.defaultRender);
+  }
 
   Napi::Array inputs = Napi::Array::New(env);
   Napi::Array outputs = Napi::Array::New(env);
@@ -141,7 +192,9 @@ Napi::Value Start(const Napi::CallbackInfo& info) {
 
 /**
  * onStatus(callback(type, message)) -> void
- *   type: "device-lost" | "restarted" | "restart-failed" | "fallback".
+ *   type: "device-lost" | "restarted" | "restart-failed" | "fallback" |
+ *         "switched" (back to the selected device / followed the new default) |
+ *         "devices-changed" (endpoints added/removed; refresh device lists).
  *   Called on the JS thread; events originate on the audio processing
  *   thread. Register once, before start() (replacing it while the engine is
  *   running is not synchronised). Does not keep the process alive.
@@ -151,25 +204,19 @@ void OnStatus(const Napi::CallbackInfo& info) {
   if (info.Length() < 1 || !info[0].IsFunction()) return;
 
   g_engine.setStatusCallback(nullptr);
-  if (g_statusTsfnActive) {
-    g_statusTsfn.Release();
-    g_statusTsfnActive = false;
+  {
+    std::lock_guard<std::mutex> lock(g_statusMutex);
+    if (g_statusTsfnActive) {
+      g_statusTsfnActive = false;
+      g_statusTsfn.Release();
+    }
+    g_statusTsfn = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(),
+                                                 "ainoiceguard-status", 0, 1);
+    g_statusTsfn.Unref(env);
+    g_statusTsfnActive = true;
   }
 
-  g_statusTsfn = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(),
-                                               "ainoiceguard-status", 0, 1);
-  g_statusTsfn.Unref(env);
-  g_statusTsfnActive = true;
-
-  g_engine.setStatusCallback([](const std::string& type, const std::string& message) {
-    auto* payload = new std::pair<std::string, std::string>(type, message);
-    napi_status st = g_statusTsfn.NonBlockingCall(
-        payload, [](Napi::Env env, Napi::Function cb, std::pair<std::string, std::string>* p) {
-          cb.Call({Napi::String::New(env, p->first), Napi::String::New(env, p->second)});
-          delete p;
-        });
-    if (st != napi_ok) delete payload; /* queue closing: drop the event */
-  });
+  g_engine.setStatusCallback(EmitStatus);
 }
 
 /** _debugForceDeviceLoss() -> void  (test hook: exercises the restart path) */
@@ -380,6 +427,7 @@ Napi::Object EngineMetrics(Napi::Env env) {
   rec.Set("restarts", Napi::Number::New(env, num(s.restarts)));
   rec.Set("restartFailures", Napi::Number::New(env, num(s.restartFailures)));
   rec.Set("deviceLossEvents", Napi::Number::New(env, num(s.deviceLossEvents)));
+  rec.Set("reselects", Napi::Number::New(env, num(s.reselects)));
   e.Set("recovery", rec);
 
   return e;
@@ -438,16 +486,25 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getAgcEnabled", Napi::Function::New(env, GetAgcEnabled));
   exports.Set("isRunning", Napi::Function::New(env, IsRunning));
   exports.Set("onStatus", Napi::Function::New(env, OnStatus));
+
+  /* Watch for endpoints being added/removed or the OS default changing:
+   * the engine polls it (return to preferred / follow default) and JS gets a
+   * "devices-changed" event to refresh its device lists. Windows only. */
+  ainoiceguard::DeviceWatcher::instance().setCallback(
+      []() { EmitStatus("devices-changed", "Audio devices changed"); });
+  ainoiceguard::DeviceWatcher::instance().start();
   exports.Set("_debugForceDeviceLoss", Napi::Function::New(env, DebugForceDeviceLoss));
 
   /* On environment teardown: stop audio and release the status queue before
    * the TSFN is destroyed, so no event can target a dead environment. */
   env.AddCleanupHook([]() {
+    ainoiceguard::DeviceWatcher::instance().stop();
     g_engine.stop();  /* first: no processing thread may still emit events */
     g_engine.setStatusCallback(nullptr);
+    std::lock_guard<std::mutex> lock(g_statusMutex);
     if (g_statusTsfnActive) {
-      g_statusTsfn.Release();
       g_statusTsfnActive = false;
+      g_statusTsfn.Release();
     }
   });
   exports.Set("getMetrics", Napi::Function::New(env, GetMetrics));
