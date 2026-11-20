@@ -82,4 +82,4 @@ if (failed) {
   process.exit(1);
 } else {
   console.log("\nVerification passed.\n");
-}
+};

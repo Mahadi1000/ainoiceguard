@@ -27,4 +27,4 @@ if (require.main === module) {
       process.exit(result.status || 1)
     }
   }
-}
+};
