@@ -70,10 +70,12 @@
           ]
         }
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true,
+      "icon": "electron/assets/icon.ico"
     },
     "linux": {
       "category": "Audio",
+      "icon": "electron/assets/icon.png",
       "target": [
         "AppImage",
         "deb",
@@ -81,6 +83,7 @@
       ]
     },
     "mac": {
+      "icon": "electron/assets/icon.png",
       "target": [
         "dmg",
         "zip"
@@ -94,6 +97,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Ainoiceguard",
+      "installerIcon": "electron/assets/icon.ico",
+      "uninstallerIcon": "electron/assets/icon.ico",
       "uninstallDisplayName": "Ainoiceguard",
       "include": "build/installer/installer.nsh"
     }

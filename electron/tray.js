@@ -19,16 +19,7 @@ let mainWindowRef = null;
 function createTray(mainWindow) {
   mainWindowRef = mainWindow;
 
-  /*
-   * Create a simple 16x16 tray icon.
-   * In production, replace with a proper .ico/.png asset.
-   * For the starter, we generate a colored square programmatically.
-   */
-  const icon = nativeImage.createFromDataURL(
-    generateTrayIconDataURL("#00CC88"),
-  );
-
-  tray = new Tray(icon);
+  tray = new Tray(trayIcon(false));
   tray.setToolTip("Ainoiceguard - Noise Cancellation");
 
   updateTrayMenu(false);
@@ -85,9 +76,8 @@ function updateTrayMenu(isRunning) {
 
   tray.setContextMenu(menu);
 
-  /* Update icon color based on state. */
-  const color = isRunning ? "#00CC88" : "#666666";
-  tray.setImage(nativeImage.createFromDataURL(generateTrayIconDataURL(color)));
+  /* Green shield while running, grey while idle. */
+  tray.setImage(trayIcon(isRunning));
 }
 
 /**
@@ -121,50 +111,32 @@ function positionWindowNearTray() {
 }
 
 /**
- * Generate a simple colored square icon as a data URL.
- * @param {string} color - CSS hex color
- * @returns {string} data URL
+ * Tray icon: the shield glyph from electron/assets (tray-on/tray-off.png;
+ * Electron picks the @2x file on high-DPI screens). Made by tools/make-icons.js.
+ * Falls back to a plain dot if the file is missing.
+ * @param {boolean} isRunning
  */
-function generateTrayIconDataURL(color) {
-  /*
-   * Create a 16x16 PNG with a colored circle.
-   * This is a minimal programmatic icon for the starter.
-   * Replace with a proper icon file in production.
-   *
-   * We use a simple base64 encoded 16x16 image.
-   * For now, just use a colored rectangle via nativeImage.
-   */
-  const size = 16;
-  const canvas = Buffer.alloc(size * size * 4);
+function trayIcon(isRunning) {
+  const file = path.join(__dirname, "assets", isRunning ? "tray-on.png" : "tray-off.png");
+  const img = nativeImage.createFromPath(file);
+  return img.isEmpty() ? nativeImage.createFromDataURL(dotDataURL(isRunning ? "#00d68f" : "#9a9ab4")) : img;
+}
 
-  /* Parse hex color. */
+/** 16x16 filled circle, used only if the tray PNGs are missing. */
+function dotDataURL(color) {
+  const size = 16;
+  const px = Buffer.alloc(size * size * 4);
   const r = parseInt(color.slice(1, 3), 16);
   const g = parseInt(color.slice(3, 5), 16);
   const b = parseInt(color.slice(5, 7), 16);
-
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const cx = x - size / 2 + 0.5;
-      const cy = y - size / 2 + 0.5;
-      const dist = Math.sqrt(cx * cx + cy * cy);
-      const idx = (y * size + x) * 4;
-
-      if (dist <= 6) {
-        canvas[idx] = r; /* R */
-        canvas[idx + 1] = g; /* G */
-        canvas[idx + 2] = b; /* B */
-        canvas[idx + 3] = 255; /* A */
-      } else {
-        canvas[idx + 3] = 0; /* Transparent */
-      }
+      const i = (y * size + x) * 4;
+      /* nativeImage buffers are BGRA */
+      if (Math.hypot(x - 7.5, y - 7.5) <= 6) px.set([b, g, r, 255], i);
     }
   }
-
-  const img = nativeImage.createFromBuffer(canvas, {
-    width: size,
-    height: size,
-  });
-  return img.toDataURL();
+  return nativeImage.createFromBuffer(px, { width: size, height: size }).toDataURL();
 }
 
 function destroyTray() {

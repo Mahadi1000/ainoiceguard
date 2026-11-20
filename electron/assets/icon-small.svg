@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Ainoiceguard app icon, simplified for <= 32 px -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22223a"/><stop offset="1" stop-color="#0d0d14"/></linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g transform="translate(256 262) scale(1.22) translate(-256 -264)">
+    <path d="M256 92 C300 118 350 128 404 130 V250 C404 345 340 404 256 436 C172 404 108 345 108 250 V130 C162 128 212 118 256 92 Z" fill="#00d68f"/>
+    <rect x="150" y="207.0" width="60" height="110" rx="30" fill="#0d0d14"/>
+  <rect x="226" y="162.0" width="60" height="200" rx="30" fill="#0d0d14"/>
+  <rect x="302" y="207.0" width="60" height="110" rx="30" fill="#0d0d14"/>
+  </g>
+</svg>

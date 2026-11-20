@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Ainoiceguard app icon (>= 48 px). Source of truth; PNG/ICO are made by tools/make-icons.js -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22223a"/><stop offset="1" stop-color="#0d0d14"/></linearGradient>
+    <linearGradient id="sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3cf5b4"/><stop offset="1" stop-color="#00a86c"/></linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#00d68f" stop-opacity="0.32"/><stop offset="1" stop-color="#00d68f" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  <rect x="17" y="17" width="478" height="478" rx="107" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="2"/>
+  <circle cx="256" cy="264" r="220" fill="url(#glow)"/>
+  <!-- noise in (left), clean signal out (right) -->
+  <polyline points="30,262 37,280 44,236 51,274 58,232 65,284 72,248 79,290 86,242 93,272 100,238 107,278 114,262" fill="none" stroke="#7a7a98" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"/>
+  <polyline points="400,262.0 404,267.5 408,272.3 412,275.9 416,277.8 420,277.8 424,275.9 428,272.3 432,267.5 436,262.0 440,256.5 444,251.7 448,248.1 452,246.2 456,246.2 460,248.1 464,251.7 468,256.5 472,262.0 476,267.5 480,272.3 484,275.9" fill="none" stroke="#00d68f" stroke-width="9" stroke-linecap="round"/>
+  <path d="M256 92 C300 118 350 128 404 130 V250 C404 345 340 404 256 436 C172 404 108 345 108 250 V130 C162 128 212 118 256 92 Z" fill="url(#sh)"/>
+  <path d="M256 112 C296 135 342 145 386 148" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="6" stroke-linecap="round"/>
+  <rect x="141" y="225.0" width="30" height="70" rx="15" fill="#0d0d14"/>
+  <rect x="191" y="190.0" width="30" height="140" rx="15" fill="#0d0d14"/>
+  <rect x="241" y="160.0" width="30" height="200" rx="15" fill="#0d0d14"/>
+  <rect x="291" y="190.0" width="30" height="140" rx="15" fill="#0d0d14"/>
+  <rect x="341" y="225.0" width="30" height="70" rx="15" fill="#0d0d14"/>
+</svg>

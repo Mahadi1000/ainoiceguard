@@ -163,6 +163,8 @@ function createMainWindow() {
     resizable: false,
     skipTaskbar: false,
     transparent: false,
+    /* Taskbar / Alt-Tab icon (installed builds also get it from the exe). */
+    icon: path.join(__dirname, "assets", process.platform === "win32" ? "icon.ico" : "icon-256.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
