@@ -51,6 +51,8 @@ test("sanitize clamps ranges and rejects wrong types", () => {
   assert.equal(s.inputId, DEFAULTS.inputId);
   assert.equal(s.outputId, DEFAULTS.outputId);
   assert.equal(s.exclusive, false);
+  assert.equal(sanitize({ agcEnabled: "no" }).agcEnabled, true, "AGC defaults on");
+  assert.equal(sanitize({ agcEnabled: false }).agcEnabled, false);
   assert.equal(sanitize({ outputId: null }).outputId, null);
   assert.equal(sanitize({ level: NaN }).level, DEFAULTS.level);
 });

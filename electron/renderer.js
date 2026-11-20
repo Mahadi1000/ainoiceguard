@@ -16,6 +16,8 @@ const levelSlider = document.getElementById("levelSlider");
 const levelValue = document.getElementById("levelValue");
 const vadThreshSlider = document.getElementById("vadThreshSlider");
 const vadThreshValue = document.getElementById("vadThreshValue");
+const agcToggle = document.getElementById("agcToggle");
+const agcGainText = document.getElementById("agcGainText");
 const statusText = document.getElementById("statusText");
 const latencyText = document.getElementById("latencyText");
 const framesText = document.getElementById("framesText");
@@ -120,6 +122,7 @@ function applySavedSliders() {
   const vad = Math.round(settings.vadThreshold * 100);
   vadThreshSlider.value = vad;
   vadThreshValue.textContent = vad + "%";
+  if (agcToggle) agcToggle.checked = settings.agcEnabled !== false;
 }
 
 function saveSettings(patch) {
@@ -309,6 +312,21 @@ vadThreshSlider.addEventListener("change", async () => {
   }
 });
 
+/* ── Auto level (AGC) toggle ─────────────────────────────────────────────── */
+
+if (agcToggle) {
+  agcToggle.addEventListener("change", async () => {
+    const enabled = agcToggle.checked;
+    saveSettings({ agcEnabled: enabled });
+    if (agcGainText && !enabled) agcGainText.textContent = "off";
+    try {
+      if (bridge && bridge.setAgc) await bridge.setAgc(enabled);
+    } catch (err) {
+      /* Non-critical */
+    }
+  });
+}
+
 /* ── Device selection change while running -> restart ────────────────────── */
 
 inputSelect.addEventListener("change", () => {
@@ -398,6 +416,14 @@ function startMetricsPolling() {
         ? (gateGain * 100).toFixed(0) + "%"
         : "--";
 
+      /* Current AGC gain (or "off"). */
+      if (agcGainText) {
+        const g = Number(m.agcGainDb);
+        agcGainText.textContent = m.agcEnabled === false
+          ? "off"
+          : Number.isFinite(g) ? (g >= 0 ? "+" : "") + g.toFixed(0) + " dB" : "—";
+      }
+
       /* Live end-to-end latency estimate (device + rings + RNNoise frame). */
       const lat = m.engine && m.engine.latency ? Number(m.engine.latency.estimatedTotalMs) : NaN;
       if (outputSelect.value === MUTE) {
@@ -456,6 +482,7 @@ function stopMetricsPolling() {
   vadValue.textContent = "0%";
   framesText.textContent = "0";
   gateText.textContent = "--";
+  if (agcGainText) agcGainText.textContent = agcToggle && !agcToggle.checked ? "off" : "—";
 }
 
 /* ── UI Update Helpers ───────────────────────────────────────────────────── */

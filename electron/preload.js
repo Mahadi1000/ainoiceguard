@@ -27,5 +27,6 @@ contextBridge.exposeInMainWorld("ainoiceguard", {
   getMetrics: () => ipcRenderer.invoke("audio:get-metrics"),
   setVadThreshold: (threshold) =>
     ipcRenderer.invoke("audio:set-vad-threshold", threshold),
+  setAgc: (enabled) => ipcRenderer.invoke("audio:set-agc", enabled),
   openExternal: (url) => ipcRenderer.invoke("app:open-external", url),
 });

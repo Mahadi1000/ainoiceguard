@@ -18,6 +18,7 @@ const DEFAULTS = Object.freeze({
   level: 1.0,        // suppression level [0, 1]
   vadThreshold: 0.5, // gate threshold [0, 1]
   exclusive: false,  // WASAPI exclusive mode (opt-in)
+  agcEnabled: true,  // speech AGC (Phase 4a); off = fixed +2 dB makeup gain
 });
 
 const clamp01 = (v, d) => (typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : d);
@@ -33,6 +34,7 @@ function sanitize(raw) {
     level: clamp01(s.level, DEFAULTS.level),
     vadThreshold: clamp01(s.vadThreshold, DEFAULTS.vadThreshold),
     exclusive: typeof s.exclusive === "boolean" ? s.exclusive : DEFAULTS.exclusive,
+    agcEnabled: typeof s.agcEnabled === "boolean" ? s.agcEnabled : DEFAULTS.agcEnabled,
   };
 }
 

@@ -463,3 +463,28 @@ body {
 .hidden {
   display: none !important;
 }
+
+/* AGC toggle row (inside the Suppression card) */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-row input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+.toggle-row .toggle-name {
+  flex: 1;
+}
+.banner-note {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  opacity: 0.75;
+}

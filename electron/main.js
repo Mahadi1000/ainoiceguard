@@ -118,6 +118,7 @@ app.whenReady().then(() => {
   try {
     addon.setNoiseLevel(s.level);
     addon.setVadThreshold(s.vadThreshold);
+    addon.setAgcEnabled(s.agcEnabled);
   } catch (err) {
     console.error("Could not apply saved settings:", err.message);
   }
@@ -293,6 +294,19 @@ ipcMain.handle("audio:get-metrics", () => {
 ipcMain.handle("audio:set-vad-threshold", (_event, threshold) => {
   try {
     addon.setVadThreshold(threshold);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+/**
+ * audio:set-agc -> { success: boolean }
+ * @param {boolean} enabled - speech AGC on/off (off = fixed +2 dB makeup gain)
+ */
+ipcMain.handle("audio:set-agc", (_event, enabled) => {
+  try {
+    addon.setAgcEnabled(enabled === true);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };

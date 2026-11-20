@@ -76,3 +76,18 @@ After the first 60 s the correction averaged **+3.3 ppm (sd 18.9)**, which match
 | start with the chosen camera mic unplugged | immediate `fallback` to the built-in mic, no false loss |
 | **replug → switch back** | **not yet observed:** the camera did not re-appear in Windows during either test window |
 | follow a changed Windows default | not yet tested (needs the default changed in Sound settings during a run) |
+
+## 5.3 AGC switch in the UI, VB-Cable latency note
+
+- **Auto level (AGC) checkbox** in the Suppression card, with the live AGC gain next to it ("+8 dB", or "off"). Persisted as `agcEnabled` in `settings.json` (default on) and applied at start-up by `main.js`; `audio:set-agc` IPC → `addon.setAgcEnabled`.
+- **The VB-Cable banner** now notes that the latency shown is Ainoiceguard's own, and that VB-Cable adds its own buffering (~100 ms measured on the test PC, Phase 4c).
+
+**Verified in the real app** (temporary settings folder, output muted):
+
+| step | result |
+|---|---|
+| start with AGC on | readout "+2 dB" (the AGC's starting gain; it held there over this short run in a quiet room) |
+| untick while running | engine AGC off at once (`getAgcEnabled() = false`), readout "off", `settings.json` → `agcEnabled: false` |
+| relaunch | checkbox unticked, engine AGC off from start-up |
+
+The pending **silent-room AGC check** (Phase 4a, open point 1) still needs a longer run in a confirmed-silent room. With the new readout you can watch `+N dB` directly in the app.
