@@ -25,7 +25,9 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "device_policy.h"
 
@@ -53,6 +55,22 @@ class DeviceWatcher {
    * calling thread if needed. Returns false where unsupported or on error.
    */
   static bool snapshot(EndpointSnapshot& out);
+
+  /** An app with an audio session on a recording endpoint. */
+  struct CaptureClient {
+    uint32_t pid = 0;
+    std::string process;  /* executable name, e.g. "Discord.exe" ("" if not readable) */
+    bool active = false;  /* currently recording (session state Active) */
+  };
+
+  /**
+   * Apps with an audio session on the recording endpoint `endpointName`
+   * (friendly name, e.g. "CABLE Output (VB-Audio Virtual Cable)"; a prefix
+   * such as a 31-character MME name also matches if no name is exact), excluding
+   * this process and the system-sounds session. Windows only; false elsewhere
+   * or if the endpoint is not found.
+   */
+  static bool captureClients(const std::string& endpointName, std::vector<CaptureClient>& out);
 
   /** Called by the COM notification object: something changed. */
   void notifyRaw();

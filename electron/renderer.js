@@ -39,6 +39,7 @@ const vbCableMissing = document.getElementById("vbCableMissing");
 const vbCableLink = document.getElementById("vbCableLink");
 const vbCableRefresh = document.getElementById("vbCableRefresh");
 const vbCableMicName = document.getElementById("vbCableMicName");
+const cableClients = document.getElementById("cableClients");
 
 /* ── State ───────────────────────────────────────────────────────────────── */
 
@@ -111,6 +112,7 @@ async function init() {
   await loadDevices();
   await syncStatus();
   setInterval(syncStatus, 2000);
+  setInterval(refreshCableClients, 2000);
 }
 
 /** Restore saved suppression level / VAD threshold into the sliders. */
@@ -538,6 +540,7 @@ function detectVBCable(inputDevices, outputDevices) {
   cable = choice.findVirtualCable(inputDevices, outputDevices);
   const cableDevice = cable ? { id: cable.outputId } : null;
   if (cable && vbCableMicName) vbCableMicName.textContent = cable.micName;
+  refreshCableClients();
 
   if (cableDevice) {
     if (vbCableFound) vbCableFound.classList.remove("hidden");
@@ -547,6 +550,32 @@ function detectVBCable(inputDevices, outputDevices) {
   }
   /* Only a suggestion: loadDevices() applies it if no output was ever saved. */
   return cableDevice ? cableDevice.id : null;
+}
+
+/* Which apps (Zoom, Discord...) record from the cable's mic end. Polled every
+   2 s; hidden when there is no cable or the platform can't tell (null). */
+let cableClientsBusy = false;
+async function refreshCableClients() {
+  if (!cableClients || cableClientsBusy) return;
+  if (!cable || !bridge || !bridge.getCaptureClients || document.hidden) {
+    if (!cable) cableClients.classList.add("hidden");
+    return;
+  }
+  cableClientsBusy = true;
+  try {
+    const d = choice.describeCaptureClients(await bridge.getCaptureClients(cable.micId), cable.micName);
+    if (!d) {
+      cableClients.classList.add("hidden");
+    } else {
+      cableClients.textContent = d.text;
+      cableClients.classList.toggle("in-use", d.inUse);
+      cableClients.classList.remove("hidden");
+    }
+  } catch (_err) {
+    cableClients.classList.add("hidden");
+  } finally {
+    cableClientsBusy = false;
+  }
 }
 
 /* Open VB-Audio download page. */

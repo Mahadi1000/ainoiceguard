@@ -87,7 +87,35 @@
     return !!cable && inputId === cable.micId && outputId === cable.outputId;
   }
 
-  const api = { visibleDevices, chooseSelection, nameFromId, findVirtualCable, isFeedbackLoop };
+  /**
+   * One line for the VB-Cable banner from getCaptureClients(): which apps
+   * record from the cable. Duplicate processes (one app, several sessions)
+   * are listed once; ".exe" is dropped. null input = unknown -> null.
+   * @returns {{ text: string, inUse: boolean } | null}
+   */
+  function describeCaptureClients(clients, micName) {
+    if (!Array.isArray(clients)) return null;
+    const label = (c) => (c.process ? c.process.replace(/\.exe$/i, "") : "PID " + c.pid);
+    const uniq = (list) => [...new Set(list.map(label))];
+    const active = uniq(clients.filter((c) => c.active));
+    const idle = uniq(clients.filter((c) => !c.active)).filter((n) => !active.includes(n));
+    if (active.length) {
+      return { text: "In use by: " + active.join(", "), inUse: true };
+    }
+    if (idle.length) {
+      return { text: "Open in: " + idle.join(", ") + " (not recording right now)", inUse: false };
+    }
+    return { text: "No app is using " + (micName || "the cable") + " yet.", inUse: false };
+  }
+
+  const api = {
+    visibleDevices,
+    chooseSelection,
+    nameFromId,
+    findVirtualCable,
+    isFeedbackLoop,
+    describeCaptureClients,
+  };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

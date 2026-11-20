@@ -91,3 +91,36 @@ After the first 60 s the correction averaged **+3.3 ppm (sd 18.9)**, which match
 | relaunch | checkbox unticked, engine AGC off from start-up |
 
 The pending **silent-room AGC check** (Phase 4a, open point 1) still needs a longer run in a confirmed-silent room. With the new readout you can watch `+N dB` directly in the app.
+
+## 5.4 Which apps use the cable (call detection)
+
+**Goal** (Krisp-like): show whether a call app is actually using the cleaned mic. A common setup mistake is starting Ainoiceguard while Zoom or Discord still records the raw mic, and nothing in the app showed that.
+
+**Native** (`device_watch.cpp`, `DeviceWatcher::captureClients`, Windows only):
+- Find the recording endpoint by friendly name: exact match first, else a prefix match (MME cuts names to 31 characters).
+- `IMMDevice::Activate(IAudioSessionManager2)` → session enumerator → for each session, `IAudioSessionControl2` gives the pid and the state (Active, Inactive, Expired).
+- Skipped: our own process, the system-sounds session and expired sessions.
+- The process name comes from `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW`; it stays empty if the process is not readable (for example, elevated).
+- Other platforms: stub (returns not supported).
+
+**Addon:** `getCaptureClients(idOrName)` → `[{ pid, process, active }]`, or `null` if the endpoint was not found or the platform is unsupported. A `host|` id prefix is stripped, so the renderer passes `cable.micId` directly. **Main:** IPC `audio:capture-clients`.
+
+**UI:** a line in the VB-Cable banner, refreshed every 2 s while the window is visible (`describeCaptureClients` in `device-choice.js`, unit-tested):
+
+| sessions on CABLE Output | banner line |
+|---|---|
+| none | "No app is using CABLE Output (VB-Audio Virtual Cable) yet." |
+| at least one active | **"In use by: Discord, Zoom"** (bold; one entry per app; ".exe" dropped) |
+| only inactive (app open, not recording) | "Open in: obs64 (not recording right now)" |
+| not supported / not found | line hidden |
+
+**Verified live** with `ng_loopback` recording from CABLE Output as the "call app":
+
+| check | result |
+|---|---|
+| addon call while ng_loopback runs | `[{ pid: 14396, process: "ng_loopback.exe", active: true }]`, **10 ms** per call |
+| after ng_loopback exits | `[]` (its session is gone) |
+| unknown endpoint name | `null` |
+| real app, banner before / during / after | "No app is using … yet." → **"In use by: ng_loopback"** → "No app is using … yet." |
+
+**Not done (possible next step):** automatically starting suppression when a call app starts recording from the cable, as Krisp does. That would be opt-in (default off), because starting the engine opens the user's microphone.

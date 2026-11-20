@@ -12,6 +12,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <audiopolicy.h> /* IAudioSessionManager2: which apps record from a device */
 #include <mmdeviceapi.h>
 #include <propidl.h>
 #endif
@@ -203,6 +204,91 @@ bool DeviceWatcher::snapshot(EndpointSnapshot& out) {
   return ok;
 }
 
+bool DeviceWatcher::captureClients(const std::string& endpointName, std::vector<CaptureClient>& out) {
+  out.clear();
+  const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  const bool uninit = SUCCEEDED(co);
+  if (FAILED(co) && co != RPC_E_CHANGED_MODE) return false;
+
+  bool found = false;
+  IMMDeviceEnumerator* en = nullptr;
+  if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                 __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&en)))) {
+    IMMDeviceCollection* col = nullptr;
+    if (SUCCEEDED(en->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &col))) {
+      UINT n = 0;
+      col->GetCount(&n);
+      /* Exact friendly name first; else a prefix match, because MME names
+         are cut to 31 characters ("CABLE Output (VB-Audio Virtual "). */
+      UINT pick = n;
+      for (UINT pass = 0; pass < 2 && pick == n && !endpointName.empty(); pass++) {
+        for (UINT i = 0; i < n && pick == n; i++) {
+          IMMDevice* dev = nullptr;
+          if (FAILED(col->Item(i, &dev))) continue;
+          const std::string fn = friendlyName(dev);
+          if (pass == 0 ? fn == endpointName : fn.rfind(endpointName, 0) == 0) pick = i;
+          dev->Release();
+        }
+      }
+      for (UINT i = pick; i < n && !found; i++) {
+        IMMDevice* dev = nullptr;
+        if (FAILED(col->Item(i, &dev))) continue;
+        {
+          found = true;
+          IAudioSessionManager2* mgr = nullptr;
+          if (SUCCEEDED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                                      reinterpret_cast<void**>(&mgr)))) {
+            IAudioSessionEnumerator* sessions = nullptr;
+            if (SUCCEEDED(mgr->GetSessionEnumerator(&sessions))) {
+              int count = 0;
+              sessions->GetCount(&count);
+              const DWORD self = GetCurrentProcessId();
+              for (int s = 0; s < count; s++) {
+                IAudioSessionControl* ctl = nullptr;
+                if (FAILED(sessions->GetSession(s, &ctl))) continue;
+                IAudioSessionControl2* ctl2 = nullptr;
+                if (SUCCEEDED(ctl->QueryInterface(__uuidof(IAudioSessionControl2),
+                                                  reinterpret_cast<void**>(&ctl2)))) {
+                  DWORD pid = 0;
+                  AudioSessionState state = AudioSessionStateInactive;
+                  ctl2->GetProcessId(&pid);
+                  ctl2->GetState(&state);
+                  /* Skip our own process, system sounds and expired sessions. */
+                  if (pid != 0 && pid != self && ctl2->IsSystemSoundsSession() != S_OK &&
+                      state != AudioSessionStateExpired) {
+                    CaptureClient c;
+                    c.pid = pid;
+                    c.active = state == AudioSessionStateActive;
+                    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+                      wchar_t path[MAX_PATH];
+                      DWORD len = MAX_PATH;
+                      if (QueryFullProcessImageNameW(h, 0, path, &len)) {
+                        const wchar_t* base = wcsrchr(path, L'\\');
+                        c.process = toUtf8(base ? base + 1 : path);
+                      }
+                      CloseHandle(h);
+                    }
+                    out.push_back(c);
+                  }
+                  ctl2->Release();
+                }
+                ctl->Release();
+              }
+              sessions->Release();
+            }
+            mgr->Release();
+          }
+        }
+        dev->Release();
+      }
+      col->Release();
+    }
+    en->Release();
+  }
+  if (uninit) CoUninitialize();
+  return found;
+}
+
 #else  /* !_WIN32: not implemented yet (see docs/phase5-robustness.md) */
 
 void DeviceWatcher::notifyRaw() {}
@@ -211,6 +297,10 @@ void DeviceWatcher::stop() {}
 void DeviceWatcher::run() {}
 bool DeviceWatcher::snapshot(EndpointSnapshot& out) {
   out = EndpointSnapshot{};
+  return false;
+}
+bool DeviceWatcher::captureClients(const std::string&, std::vector<CaptureClient>& out) {
+  out.clear();
   return false;
 }
 

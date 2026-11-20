@@ -277,6 +277,35 @@ Napi::Value GetAgcEnabled(const Napi::CallbackInfo& info) {
 }
 
 /**
+ * getCaptureClients(endpointName) -> [{ pid, process, active }] | null
+ * Apps with an audio session on a recording endpoint (e.g. "CABLE Output
+ * (VB-Audio Virtual Cable)"), excluding this process. A "host|" id prefix is
+ * stripped. null = endpoint not found or not supported on this platform.
+ */
+Napi::Value GetCaptureClients(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "endpoint name required").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+  std::string name = info[0].As<Napi::String>().Utf8Value();
+  const size_t bar = name.find('|');
+  if (bar != std::string::npos) name = name.substr(bar + 1);
+
+  std::vector<ainoiceguard::DeviceWatcher::CaptureClient> clients;
+  if (!ainoiceguard::DeviceWatcher::captureClients(name, clients)) return env.Null();
+  Napi::Array arr = Napi::Array::New(env, clients.size());
+  for (size_t i = 0; i < clients.size(); i++) {
+    Napi::Object o = Napi::Object::New(env);
+    o.Set("pid", Napi::Number::New(env, clients[i].pid));
+    o.Set("process", Napi::String::New(env, clients[i].process));
+    o.Set("active", Napi::Boolean::New(env, clients[i].active));
+    arr.Set(static_cast<uint32_t>(i), o);
+  }
+  return arr;
+}
+
+/**
  * isRunning() -> boolean
  */
 Napi::Value IsRunning(const Napi::CallbackInfo& info) {
@@ -485,6 +514,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("setAgcEnabled", Napi::Function::New(env, SetAgcEnabled));
   exports.Set("getAgcEnabled", Napi::Function::New(env, GetAgcEnabled));
   exports.Set("isRunning", Napi::Function::New(env, IsRunning));
+  exports.Set("getCaptureClients", Napi::Function::New(env, GetCaptureClients));
   exports.Set("onStatus", Napi::Function::New(env, OnStatus));
 
   /* Watch for endpoints being added/removed or the OS default changing:

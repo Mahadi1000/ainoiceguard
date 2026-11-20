@@ -482,6 +482,14 @@ body {
 .toggle-row .toggle-name {
   flex: 1;
 }
+.banner-clients {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.banner-clients.in-use {
+  font-weight: 600;
+}
 .banner-note {
   display: block;
   margin-top: 4px;

@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { visibleDevices, chooseSelection, nameFromId, findVirtualCable, isFeedbackLoop } =
+const { visibleDevices, chooseSelection, nameFromId, findVirtualCable, isFeedbackLoop, describeCaptureClients } =
   require("../electron/device-choice");
 
 const W = "Windows WASAPI|";
@@ -73,4 +73,29 @@ test("isFeedbackLoop flags recording from the cable the app writes into", () => 
   assert.equal(isFeedbackLoop(W + "External Microphone (Synaptics HD Audio)", c.outputId, c), false);
   assert.equal(isFeedbackLoop(c.micId, "mute", c), false);
   assert.equal(isFeedbackLoop(c.micId, c.outputId, null), false);
+});
+
+test("describeCaptureClients summarises apps recording from the cable", () => {
+  const mic = "CABLE Output (VB-Audio Virtual Cable)";
+  assert.equal(describeCaptureClients(null, mic), null);
+  assert.deepEqual(describeCaptureClients([], mic), { text: "No app is using " + mic + " yet.", inUse: false });
+  /* One app with two sessions is listed once; ".exe" dropped; idle apps not named next to active ones. */
+  assert.deepEqual(
+    describeCaptureClients(
+      [
+        { pid: 1, process: "Discord.exe", active: true },
+        { pid: 1, process: "Discord.exe", active: false },
+        { pid: 2, process: "Zoom.exe", active: true },
+        { pid: 3, process: "obs64.exe", active: false },
+      ],
+      mic,
+    ),
+    { text: "In use by: Discord, Zoom", inUse: true },
+  );
+  assert.deepEqual(describeCaptureClients([{ pid: 3, process: "obs64.exe", active: false }], mic), {
+    text: "Open in: obs64 (not recording right now)",
+    inUse: false,
+  });
+  /* Process name not readable (e.g. elevated app): fall back to the pid. */
+  assert.equal(describeCaptureClients([{ pid: 42, process: "", active: true }], mic).text, "In use by: PID 42");
 });

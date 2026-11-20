@@ -314,6 +314,20 @@ ipcMain.handle("audio:set-agc", (_event, enabled) => {
 });
 
 /**
+ * audio:capture-clients(micId) -> [{ pid, process, active }] | null
+ * Apps recording from a microphone endpoint, e.g. the "CABLE Output" end of
+ * VB-Cable (Zoom, Discord...). null = not found / not supported (non-Windows).
+ */
+ipcMain.handle("audio:capture-clients", (_event, micId) => {
+  try {
+    if (typeof micId !== "string" || !micId || !addon.getCaptureClients) return null;
+    return addon.getCaptureClients(micId);
+  } catch (_err) {
+    return null;
+  }
+});
+
+/**
  * settings:get -> settings object (see electron/settings.js)
  * settings:set(patch) -> merged settings, persisted atomically
  */

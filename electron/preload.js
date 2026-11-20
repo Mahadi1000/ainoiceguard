@@ -28,5 +28,7 @@ contextBridge.exposeInMainWorld("ainoiceguard", {
   setVadThreshold: (threshold) =>
     ipcRenderer.invoke("audio:set-vad-threshold", threshold),
   setAgc: (enabled) => ipcRenderer.invoke("audio:set-agc", enabled),
+  /* Apps recording from a mic endpoint (VB-Cable's CABLE Output): [{pid, process, active}] | null */
+  getCaptureClients: (micId) => ipcRenderer.invoke("audio:capture-clients", micId),
   openExternal: (url) => ipcRenderer.invoke("app:open-external", url),
 });
