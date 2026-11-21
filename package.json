@@ -31,7 +31,19 @@
     "portaudio",
     "wasapi"
   ],
-  "author": "Ainoiceguard",
+  "author": {
+    "name": "Mahadi Hasan",
+    "email": "138366726+Mahadi1000@users.noreply.github.com",
+    "url": "https://github.com/Mahadi1000"
+  },
+  "homepage": "https://github.com/Mahadi1000/ainoiceguard#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mahadi1000/ainoiceguard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mahadi1000/ainoiceguard/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "node-addon-api": "^8.0.0"
@@ -62,8 +74,14 @@
       "build/Release/**"
     ],
     "extraResources": [
-      { "from": "LICENSE", "to": "LICENSE.txt" },
-      { "from": "THIRD_PARTY_NOTICES.md", "to": "THIRD_PARTY_NOTICES.md" }
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
     ],
     "win": {
       "target": [
@@ -79,6 +97,8 @@
     },
     "linux": {
       "category": "Audio",
+      "maintainer": "Mahadi Hasan <138366726+Mahadi1000@users.noreply.github.com>",
+      "synopsis": "Real-time noise cancellation for your microphone",
       "icon": "electron/assets/icon.png",
       "target": [
         "AppImage",
@@ -106,6 +126,7 @@
       "uninstallerIcon": "electron/assets/icon.ico",
       "uninstallDisplayName": "Ainoiceguard",
       "include": "build/installer/installer.nsh"
-    }
+    },
+    "copyright": "Copyright © 2026 Mahadi Hasan and Ainoiceguard contributors"
   }
 }
