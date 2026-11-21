@@ -1,0 +1,92 @@
+name: Bug report
+description: Something does not work, crashes, or sounds wrong.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this! Please search
+        [existing issues](https://github.com/Mahadi1000/ainoiceguard/issues?q=is%3Aissue) first.
+        **Security problems:** do not report them here — see [SECURITY.md](https://github.com/Mahadi1000/ainoiceguard/blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: "I selected my USB headset and turned it on. Other people hear crackling every few seconds."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Microphone: ...
+        2. Output: CABLE Input (VB-Audio Virtual Cable)
+        3. Click the power button
+        4. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Audio quality (noise left, voice cut off, robotic, too quiet/loud)
+        - Dropouts / crackles / latency
+        - Devices (not listed, wrong device, unplug/replug)
+        - VB-Cable / using it in Zoom, Discord, Meet, Teams
+        - App window / tray / settings
+        - Installer / building from source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Ainoiceguard version
+      description: Shown at the top right of the app window, or the release you downloaded. "main@<commit>" if built from source.
+      placeholder: "v0.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version / distro
+      placeholder: "Windows 11 24H2, Ubuntu 24.04 (PipeWire), macOS 15.1..."
+  - type: textarea
+    id: devices
+    attributes:
+      label: Audio setup
+      description: Microphone, output device, and the app that uses the cleaned audio.
+      placeholder: |
+        Microphone: Microphone (USB Camera Audio)
+        Output: CABLE Input (VB-Audio Virtual Cable)
+        Used in: Discord
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Engine session log (for audio problems)
+      description: |
+        The last few lines of `engine-sessions.jsonl` (device names and counters, no audio):
+        Windows `%APPDATA%\Ainoiceguard\logs\`, macOS `~/Library/Logs/Ainoiceguard/`, Linux `~/.config/Ainoiceguard/logs/`.
+      render: json
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, error messages, console output. Please do not attach recordings of other people.

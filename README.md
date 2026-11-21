@@ -2,13 +2,20 @@
 
 A real-time noise cancellation desktop app for Windows, Linux, and macOS, built with Electron + a native C++ addon. It captures audio from your microphone, runs it through the [RNNoise](https://github.com/xiph/rnnoise) neural network, and routes the clean output to a virtual cable (e.g. VB-Cable) that other apps can use as a microphone.
 
-> Inspired by Krisp. Fully open-source.
+> Inspired by Krisp. Fully open-source ([MIT](LICENSE)).
+
+[![CI](https://github.com/Mahadi1000/ainoiceguard/actions/workflows/ci.yml/badge.svg)](https://github.com/Mahadi1000/ainoiceguard/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Mahadi1000/ainoiceguard)](https://github.com/Mahadi1000/ainoiceguard/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+**[Download the latest release](https://github.com/Mahadi1000/ainoiceguard/releases/latest)** · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Report a bug](https://github.com/Mahadi1000/ainoiceguard/issues/new/choose)
 
 ---
 
 ## Table of Contents
 
 - [Features](#features)
+- [Download](#download)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Build](#build)
@@ -24,11 +31,36 @@ A real-time noise cancellation desktop app for Windows, Linux, and macOS, built 
 ## Features
 
 - Real-time RNNoise-based noise suppression (neural network, 480-sample frames @ 48 kHz)
+- Speech-only **auto level (AGC)** and a −1 dBFS **peak limiter**
+- **VB-Cable** integration: detects the cable, warns about feedback loops, and shows
+  which apps are using the cleaned microphone ("In use by: Discord")
+- **Devices can come and go** while running: automatic fallback, return to your
+  device when it is plugged back in, and following the Windows default
+- **Clock-drift compensation** between microphone and output (no slow build-up of delay)
+- Real-time audio thread priority on Windows (MMCSS), event-driven processing,
+  zero-allocation audio callbacks, lock-free ring buffers
+- Live meters, latency and suppression/voice-gate/AGC controls; settings are remembered
 - PortAudio backend (WASAPI on Windows, CoreAudio on macOS, ALSA/PipeWire on Linux)
-- Lock-free SPSC ring buffer between capture and processing threads
-- System tray UI — device selector, suppression slider, on/off toggle
-- Auto-restart on device disconnect with exponential backoff
-- Zero-allocation audio callbacks
+
+> Some features are Windows-only for now (MMCSS priority, live device notifications,
+> "In use by"). Help porting them is very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Download
+
+Get the installer for your system from the
+**[latest release](https://github.com/Mahadi1000/ainoiceguard/releases/latest)**:
+
+| OS | File |
+|---|---|
+| Windows 10/11 | `Ainoiceguard Setup <version>.exe` |
+| Linux | `.AppImage`, `.deb` or `.tar.gz` |
+| macOS | `.dmg` |
+
+The installers are not code-signed yet: on Windows, SmartScreen may show
+"Windows protected your PC" — choose **More info → Run anyway**. Then follow the
+[VB-Cable setup](#vb-cable-setup). What changed in each version is in the [changelog](CHANGELOG.md).
 
 ---
 
@@ -67,9 +99,10 @@ Electron Main (main.js)
     ▼
 ainoiceguard.node  (N-API addon)
     │
-    ├── AudioEngine  (audio.cpp  — PortAudio + threading)
-    ├── RNNoiseWrapper (rnnoise_wrapper.cpp)
-    └── RingBuffer<float> (ringbuffer.h — header-only)
+    ├── AudioEngine     (audio.cpp — PortAudio, threads, watchdog, drift control)
+    ├── RNNoiseWrapper  (rnnoise_wrapper.cpp — HPF → RNNoise → AGC → gate → limiter)
+    ├── DeviceWatcher   (device_watch.cpp — hot-plug + "In use by", Windows)
+    └── header-only     (ringbuffer.h, drift.h, dynamics.h, device_policy.h, ...)
 ```
 
 ---
@@ -208,13 +241,15 @@ Each platform builds the native addon, packages OS-specific Electron artifacts, 
 
 To publish release assets automatically:
 
-1. Create and push a semantic version tag:
+1. Add the version's section to [CHANGELOG.md](CHANGELOG.md) and bump `package.json`.
+2. Create and push a semantic version tag:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag -a v0.2.0 -m "Ainoiceguard v0.2.0"
+   git push origin v0.2.0
    ```
-2. The `release` job collects uploaded artifacts from all build jobs.
-3. A GitHub Release is created for that tag with attached Windows/Linux/macOS assets.
+3. The `release` job collects uploaded artifacts from all build jobs.
+4. A GitHub Release is created for that tag with attached Windows/Linux/macOS assets
+   and that version's changelog section as release notes (`scripts/release-notes.js`).
 
 For non-tag pushes and PRs, artifacts are still available from the workflow run summary.
 
@@ -222,100 +257,24 @@ For non-tag pushes and PRs, artifacts are still available from the workflow run 
 
 ## Contributing
 
-Contributions are welcome — bug fixes, new features, platform ports, documentation improvements. Here is how to get started:
+Contributions are welcome — bug fixes, features, platform ports, measurements
+and documentation. Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** for the
+development setup, coding guidelines and the pull request process, and follow
+our [Code of Conduct](CODE_OF_CONDUCT.md).
 
-### Getting started
-
-1. **Fork** the repository on GitHub.
-2. **Clone** your fork locally:
-   ```bash
-   git clone https://github.com/<your-username>/ainoiceguard.git
-   cd ainoiceguard
-   ```
-3. **Create a branch** for your change. Use a descriptive name:
-
-   ```bash
-   # For a feature
-   git checkout -b feat/deepfilter-integration
-
-   # For a bug fix
-   git checkout -b fix/wasapi-exclusive-mode-crash
-
-   # For documentation
-   git checkout -b docs/macos-build-guide
-   ```
-
-4. **Make your changes**, then commit using a clear message:
-   ```bash
-   git add .
-   git commit -m "feat: add DeepFilterNet as optional DSP backend"
-   ```
-5. **Push** to your fork:
-   ```bash
-   git push origin feat/deepfilter-integration
-   ```
-6. **Open a Pull Request** against the `main` branch (see below).
-
-### Commit message style
-
-Use the [Conventional Commits](https://www.conventionalcommits.org/) format:
-
-| Prefix      | When to use                          |
-| ----------- | ------------------------------------ |
-| `feat:`     | New feature                          |
-| `fix:`      | Bug fix                              |
-| `perf:`     | Performance improvement              |
-| `refactor:` | Code restructure, no behavior change |
-| `docs:`     | Documentation only                   |
-| `test:`     | Tests                                |
-| `chore:`    | Build scripts, CI, tooling           |
-
-### Code style
-
-- **C++**: Follow the existing style (4-space indent, `snake_case` for locals, `PascalCase` for classes). Keep audio callbacks allocation-free.
-- **JavaScript**: 2-space indent, single quotes, no semicolons are fine if consistent with surrounding code.
-- Do not add new runtime dependencies without discussion in an issue first.
-
-### Pull Request guidelines
-
-When you open a PR:
-
-- Fill in the PR template (title, what changed, why, how to test).
-- Link the related issue with `Closes #<issue-number>` in the description if applicable.
-- Keep PRs focused — one logical change per PR. Large PRs are hard to review.
-- Make sure the project still builds (`npm run build:native && npm run rebuild:electron && npm start` should work).
-- Describe any new configuration, environment variable, or dependency you added.
-
-PRs are reviewed on a best-effort basis. Feedback will be left as review comments.
+Short version: fork → branch from `main` → make a focused change with tests →
+`npm test` → open a pull request using the template.
 
 ---
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/Mahadi1000/ainoiceguard/issues) to report bugs or request features.
+[Open an issue](https://github.com/Mahadi1000/ainoiceguard/issues/new/choose) and
+pick **Bug report** or **Feature request** — the forms ask for the details we need
+(version, OS, devices, and for audio problems the `engine-sessions.jsonl` log).
+Please search [existing issues](https://github.com/Mahadi1000/ainoiceguard/issues?q=is%3Aissue) first.
 
-### Bug reports
-
-Please include:
-
-- **OS version** (e.g. Windows 11 23H2)
-- **Node.js version** (`node --version`)
-- **Steps to reproduce** — what you did, what you expected, what actually happened
-- **Error output** — paste the full terminal output or Electron DevTools console log
-- **Audio setup** — input device, output device, sample rate if known
-
-### Feature requests
-
-Open an issue with the `enhancement` label. Describe:
-
-- The problem you are trying to solve
-- Your proposed solution or idea
-- Any alternatives you considered
-
-### Before opening an issue
-
-- Search [existing issues](https://github.com/Mahadi1000/ainoiceguard/issues) to avoid duplicates.
-- If you found a security vulnerability, please **do not** open a public issue. Email the maintainer directly.
+**Security vulnerabilities:** do not open a public issue — see [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -323,14 +282,18 @@ Open an issue with the `enhancement` label. Describe:
 
 Planned improvements (contributions welcome):
 
-- [ ] **DeepFilterNet** as an optional higher-quality DSP backend
 - [x] **macOS support** packaging via CoreAudio-capable build flow
 - [x] **Linux support** packaging via ALSA / PipeWire-capable build flow
-- [ ] **AGC / limiter** post-processing stage
+- [x] **AGC / limiter** post-processing stage (v0.2.0)
+- [x] **Latency measurement** display in UI (v0.2.0)
+- [x] **Installer packaging** (NSIS via electron-builder)
+- [x] **Device hot-plug handling** and **call-app detection** on Windows (v0.2.0)
+- [ ] **DeepFilterNet** as an optional higher-quality backend (benchmarked in
+      [docs/phase1b-results.md](docs/phase1b-results.md); not integrated yet)
+- [ ] **Linux / macOS** real-time priority, device notifications and call-app detection
+- [ ] **Optional auto-start** when a call app starts using the cable
 - [ ] **Noise profiles / presets** (office, street, keyboard, etc.)
-- [ ] **Latency measurement** display in UI
-- [ ] **GPU-accelerated inference** (ONNX Runtime or TFLite)
-- [ ] **Installer packaging** (NSIS / WiX via electron-builder)
+- [ ] **Code-signed installers**
 - [ ] **Auto-update** via electron-updater
 
 ---
@@ -338,3 +301,6 @@ Planned improvements (contributions welcome):
 ## License
 
 [MIT](LICENSE) — free to use, modify, and distribute.
+
+Ainoiceguard includes third-party software (RNNoise, BSD-3-Clause; PortAudio;
+Electron) under their own licences — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

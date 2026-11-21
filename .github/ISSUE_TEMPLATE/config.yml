@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Mahadi1000/ainoiceguard/security/advisories/new
+    about: Please report security problems privately, not as a public issue.
+  - name: Setup guide (VB-Cable, building from source)
+    url: https://github.com/Mahadi1000/ainoiceguard#readme
+    about: Most setup questions are answered in the README.

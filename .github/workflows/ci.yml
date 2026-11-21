@@ -161,14 +161,19 @@ jobs:
             dist/win/latest.yml
 
   release:
-    # Run on tag pushes. Requires Windows build (primary target).
-    # Linux and macOS are best-effort — their failure does not block the release.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-windows]
+    # Run on tag pushes. Requires the tests and the Windows build (primary
+    # target). Linux and macOS are best-effort: their failure does not block
+    # the release, but the job waits for them so their files are attached.
+    # Waits for all three builds; publishes if Windows succeeded.
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.build-windows.result == 'success' && needs.test.result == 'success'
+    needs: [test, build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - name: Release notes from CHANGELOG.md
+        run: node scripts/release-notes.js "${{ github.ref_name }}" > release-notes.md
       - uses: actions/download-artifact@v4
         with:
           name: ainoiceguard-windows
@@ -188,6 +193,8 @@ jobs:
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
+          name: Ainoiceguard ${{ github.ref_name }}
+          body_path: release-notes.md
           files: |
             release-artifacts/windows/*.exe
             release-artifacts/windows/*.exe.blockmap

@@ -1,6 +1,6 @@
 {
   "name": "ainoiceguard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Real-time noise cancellation desktop app (Krisp-inspired)",
   "main": "electron/main.js",
   "scripts": {
@@ -61,6 +61,10 @@
     "asarUnpack": [
       "build/Release/**"
     ],
+    "extraResources": [
+      { "from": "LICENSE", "to": "LICENSE.txt" },
+      { "from": "THIRD_PARTY_NOTICES.md", "to": "THIRD_PARTY_NOTICES.md" }
+    ],
     "win": {
       "target": [
         {
@@ -94,6 +98,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
+      "license": "LICENSE",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Ainoiceguard",
