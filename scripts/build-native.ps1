@@ -143,7 +143,10 @@ Write-Host "[3/3] Building native addon with node-gyp..." -ForegroundColor Yello
 $nativeDir = Join-Path $ROOT "native"
 Push-Location $nativeDir
 try {
-    npx node-gyp rebuild --release
+    # Call node-gyp from this project's devDependency explicitly: after a clean
+    # `npm ci`, the `node-gyp` bin link can point at @electron/node-gyp 10 (a
+    # dependency of @electron/rebuild) instead, which only supports VS 2019/2022.
+    node (Join-Path $ROOT "node_modules/node-gyp/bin/node-gyp.js") rebuild --release
     if ($LASTEXITCODE -ne 0) {
         Write-Host "node-gyp build failed!" -ForegroundColor Red
         Write-Host "Ensure Visual Studio Build Tools with Desktop C++ workload is installed." -ForegroundColor Yellow

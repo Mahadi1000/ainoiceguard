@@ -114,7 +114,7 @@ ainoiceguard.node  (N-API addon)
 | Windows                        | 10 / 11 | Build native addon with `npm run build:native` (PowerShell + VS 2022) |
 | Linux                          | Modern distro | Build native addon with `npm run build:native:unix`              |
 | macOS                          | 12+     | Build native addon with `npm run build:native:unix` (Xcode CLI tools) |
-| Node.js                        | 20 LTS+ | [nodejs.org](https://nodejs.org)                                       |
+| Node.js                        | 22 LTS+ | [nodejs.org](https://nodejs.org)                                       |
 | npm                            | 10+     | Bundled with Node.js                                                   |
 | Python                         | 3.x     | Required by node-gyp                                                   |
 | CMake                          | 3.20+   | [cmake.org](https://cmake.org/download/)                               |
@@ -236,7 +236,7 @@ Physical Mic  →  Ainoiceguard  →  CABLE Input  →  CABLE Output  →  Disco
 
 ## CI Build & Release
 
-GitHub Actions runs a matrix build on **Ubuntu, macOS, and Windows** using Node.js 20 and `npm ci`.
+GitHub Actions runs a matrix build on **Ubuntu, macOS, and Windows** using Node.js 22 and `npm ci`.
 Each platform builds the native addon, packages OS-specific Electron artifacts, and uploads them as workflow artifacts.
 
 To publish release assets automatically:

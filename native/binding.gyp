@@ -43,7 +43,7 @@
           "OS=='linux'",
           {
             "libraries": [
-              "-L../deps/install/lib",
+              "-L<(module_root_dir)/../deps/install/lib",
               "-lportaudio",
               "-lrnnoise",
               "-lasound",
@@ -57,7 +57,7 @@
           "OS=='mac'",
           {
             "libraries": [
-              "-L../deps/install/lib",
+              "-L<(module_root_dir)/../deps/install/lib",
               "-lportaudio",
               "-lrnnoise",
               "-framework CoreAudio",

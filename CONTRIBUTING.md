@@ -60,7 +60,7 @@ before writing a lot of code. It saves everyone time.
 
 ## Development setup
 
-You need Node.js 20+, Python 3, CMake 3.20+ and a C++17 compiler:
+You need Node.js 22+, Python 3, CMake 3.20+ and a C++17 compiler:
 
 | OS | Compiler / extras |
 |---|---|

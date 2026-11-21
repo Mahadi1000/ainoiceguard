@@ -31,6 +31,7 @@ mkdir -p deps/build deps/install
 (cd deps/build && cmake -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$ROOT/deps/install" \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   "$ROOT/native")
 cmake --build deps/build --config Release
 cmake --install deps/build --prefix "$ROOT/deps/install"
@@ -52,7 +53,9 @@ echo ""
 
 # Step 3: node-gyp for .node addon
 echo "[3/3] Building native addon with node-gyp..."
-(cd native && npx node-gyp rebuild --release)
+# node-gyp from this project's devDependency, not whichever copy the bin link
+# points at after `npm ci` (it can be @electron/node-gyp 10).
+(cd native && node ../node_modules/node-gyp/bin/node-gyp.js rebuild --release)
 echo "[3/3] Done!"
 echo ""
 
